@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use camino_tempfile::tempdir;
 use clap::Parser;
+use log::debug;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,7 +29,24 @@ struct Args {
     max_count: Option<usize>,
 }
 
+#[derive(Debug)]
+struct FileInfo {
+    path: Utf8PathBuf,
+    alias: String,
+    original_content: String,
+    original_mtime: SystemTime,
+}
+
+#[derive(Debug)]
+struct MatchLine {
+    file_idx: usize,
+    lineno: usize,
+    original_content: String,
+}
+
 fn main() -> Result<()> {
+    env_logger::init();
+
     let args = Args::parse();
 
     // Run ripgrep to get matches
@@ -69,13 +87,40 @@ fn main() -> Result<()> {
     // Sort matches by filename then line number for stability
     matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
-    // Build alternating-length file aliases
-    let mut file_aliases = BTreeMap::<Utf8PathBuf, String>::new();
+    // Build file info with aliases
+    let mut files: Vec<FileInfo> = Vec::new();
+    let mut path_to_idx: BTreeMap<Utf8PathBuf, usize> = BTreeMap::new();
     let mut alias_iter = generate_alias();
+
     for (path, _, _) in &matches {
-        if !file_aliases.contains_key(path) {
-            file_aliases.insert(path.clone(), alias_iter.next().unwrap().to_string());
+        if !path_to_idx.contains_key(path) {
+            let idx = files.len();
+            let content = fs::read_to_string(path)
+                .with_context(|| format!("reading original file {}", path))?;
+            let metadata = fs::metadata(path)
+                .with_context(|| format!("reading metadata for {}", path))?;
+            let mtime = metadata.modified()
+                .with_context(|| format!("getting modification time for {}", path))?;
+
+            files.push(FileInfo {
+                path: path.clone(),
+                alias: alias_iter.next().unwrap(),
+                original_content: content,
+                original_mtime: mtime,
+            });
+            path_to_idx.insert(path.clone(), idx);
         }
+    }
+
+    // Build match lines
+    let mut match_lines: Vec<MatchLine> = Vec::new();
+    for (path, lineno, content) in matches {
+        let file_idx = *path_to_idx.get(&path).unwrap();
+        match_lines.push(MatchLine {
+            file_idx,
+            lineno,
+            original_content: content,
+        });
     }
 
     // Prepare the virtual editing buffer
@@ -86,7 +131,7 @@ fn main() -> Result<()> {
         .join(format!("fixall-edit-{}.fixall.txt", ts))
         .try_into()?;
 
-    write_virtual_buffer(&tmp, &args.pattern, &matches, &file_aliases)?;
+    write_virtual_buffer(&tmp, &args.pattern, &match_lines, &files)?;
 
     // Keep original text for change detection
     let original = fs::read_to_string(&tmp)?;
@@ -108,7 +153,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    apply_changes(&new_text, &file_aliases)?;
+    apply_changes(&new_text, &files)?;
 
     println!("Applied edits successfully.");
     Ok(())
@@ -118,7 +163,6 @@ fn main() -> Result<()> {
 fn generate_alias() -> impl Iterator<Item = String> {
     let letters: Vec<char> = (b'A'..=b'Z').map(|c| c as char).collect();
 
-    // Collect into a Vec<String> and return its into_iter() — simple and compiles.
     let mut v = Vec::new();
 
     // First 52: A, AA, B, AB, C, AC, ...
@@ -143,12 +187,12 @@ fn generate_alias() -> impl Iterator<Item = String> {
 fn write_virtual_buffer(
     tmp: &Utf8Path,
     regex: &str,
-    matches: &[(Utf8PathBuf, usize, String)],
-    file_aliases: &BTreeMap<Utf8PathBuf, String>,
+    match_lines: &[MatchLine],
+    files: &[FileInfo],
 ) -> Result<()> {
     let mut file = fs::File::create(tmp)?;
 
-    writeln!(file, "# fixall — bulk regex editing buffer")?;
+    writeln!(file, "# fixall – bulk regex editing buffer")?;
     writeln!(file, "# Regex: {regex}")?;
     writeln!(file, "# Save and close to apply changes.")?;
     writeln!(file, "# Lines starting with '#' are ignored.")?;
@@ -156,35 +200,44 @@ fn write_virtual_buffer(
     writeln!(file, "# --- Begin editable lines ---")?;
     writeln!(file)?;
 
-    let max_line_len = matches
+    let max_line_len = match_lines
         .iter()
-        .map(|(_, l, _)| l.to_string().len())
+        .map(|m| m.lineno.to_string().len())
         .max()
         .unwrap_or(1);
 
-    for (path, lineno, content) in matches {
-        let alias = file_aliases.get(path).unwrap();
-        writeln!(file, "{alias:>2} {lineno:>width$} | {content}", width = max_line_len)?;
+    for m in match_lines {
+        let alias = &files[m.file_idx].alias;
+        writeln!(
+            file,
+            "{alias:>2} {lineno:>width$} | {content}",
+            lineno = m.lineno,
+            content = m.original_content,
+            width = max_line_len
+        )?;
     }
 
     writeln!(file)?;
     writeln!(file, "# --- File Aliases ---")?;
-    for (path, alias) in file_aliases {
-        writeln!(file, "# {alias:>2} = {path}")?;
+    for f in files {
+        writeln!(file, "# {:>2} = {}", f.alias, f.path)?;
     }
 
     Ok(())
 }
 
-fn apply_changes(new_text: &str, file_aliases: &BTreeMap<Utf8PathBuf, String>) -> Result<()> {
-    let line_re = Regex::new(r"^([A-Z]+)\s+(\d+)\s+\|\s(.*)$")?;
+fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
+    let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+\|\s(.*)$")?;
 
-    // Build reverse map for alias -> path
-    let alias_to_path: BTreeMap<String, &Utf8PathBuf> =
-        file_aliases.iter().map(|(p, a)| (a.clone(), p)).collect();
+    // Build alias -> file index map
+    let alias_to_idx: BTreeMap<&str, usize> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, f)| (f.alias.as_str(), idx))
+        .collect();
 
-    let mut file_cache: BTreeMap<&Utf8PathBuf, Vec<String>> = BTreeMap::new();
-    let mut has_trailing_newline = true;
+    // Track changes: (file_idx, lineno) -> new_content
+    let mut changes: BTreeMap<(usize, usize), String> = BTreeMap::new();
 
     for line in new_text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -194,39 +247,83 @@ fn apply_changes(new_text: &str, file_aliases: &BTreeMap<Utf8PathBuf, String>) -
         if let Some(cap) = line_re.captures(line) {
             let alias = cap.get(1).unwrap().as_str();
             let lineno: usize = cap.get(2).unwrap().as_str().parse()?;
-            let content = cap.get(3).unwrap().as_str();
+            let new_content = cap.get(3).unwrap().as_str();
 
-            if let Some(path) = alias_to_path.get(alias) {
-                let lines = file_cache.entry(path).or_insert_with(|| {
-                    fs::read_to_string(path)
-                        .unwrap_or_default()
-                        .lines()
-                        .map(|s| s.to_string())
-                        .collect()
-                });
+            if let Some(&file_idx) = alias_to_idx.get(alias) {
+                let file = &files[file_idx];
 
-                if let Some(line_slot) = lines.get_mut(lineno - 1) {
-                    *line_slot = content.to_string();
-                } else {
-                    eprintln!("Warning: line {lineno} out of range for {path}");
-                }
+                // Get the original line from the file
+                let original_lines: Vec<&str> = file.original_content.lines().collect();
 
-                if let Some(last) = lines.last() {
-                    has_trailing_newline = last.ends_with('\n');
+                if let Some(&original_line) = original_lines.get(lineno - 1) {
+                    // Only track if content changed
+                    if original_line != new_content {
+                        debug!("Change detected at {}:{}", file.path, lineno);
+                        debug!("  Original: {:?}", original_line);
+                        debug!("  New:      {:?}", new_content);
+                        changes.insert((file_idx, lineno), new_content.to_string());
+                    } else {
+                        debug!("No change at {}:{}", file.path, lineno);
+                        debug!("  Both are: {:?}", original_line);
+                    }
                 }
             }
         }
     }
 
-    for (path, lines) in file_cache {
-        let mut joined = lines.join("\n");
+    if changes.is_empty() {
+        println!("No actual changes detected.");
+        return Ok(());
+    }
 
+    // Group changes by file
+    let mut files_to_update: BTreeMap<usize, Vec<(usize, String)>> = BTreeMap::new();
+    for ((file_idx, lineno), content) in changes {
+        files_to_update.entry(file_idx).or_default().push((lineno, content));
+    }
+
+    // Apply changes to each file
+    for (file_idx, file_changes) in files_to_update {
+        let file = &files[file_idx];
+
+        // Check if file was modified since we started
+        let current_metadata = fs::metadata(&file.path)
+            .with_context(|| format!("reading current metadata for {}", file.path))?;
+        let current_mtime = current_metadata.modified()
+            .with_context(|| format!("getting current modification time for {}", file.path))?;
+
+        if current_mtime != file.original_mtime {
+            eprintln!("Error: file {} was modified during editing session, skipping", file.path);
+            continue;
+        }
+
+        // Preserve whether original had trailing newline
+        let has_trailing_newline = file.original_content.ends_with('\n');
+
+        let mut lines: Vec<String> = file.original_content
+            .lines()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Apply changes
+        for (lineno, new_content) in file_changes {
+            if let Some(line_slot) = lines.get_mut(lineno - 1) {
+                *line_slot = new_content;
+            } else {
+                eprintln!("Warning: line {lineno} out of range for {}", file.path);
+            }
+        }
+
+        // Reconstruct file with proper trailing newline handling
+        let mut joined = lines.join("\n");
         if has_trailing_newline {
             joined.push('\n');
         }
 
-        fs::write(path, joined)
-            .with_context(|| format!("writing changes back to {}", path.as_str()))?;
+        fs::write(&file.path, joined)
+            .with_context(|| format!("writing changes back to {}", file.path.as_str()))?;
+
+        println!("Updated {}", file.path);
     }
 
     Ok(())
