@@ -32,6 +32,10 @@ struct Args {
     /// Exclude pattern - matches that also match this regex will be filtered out
     #[arg(short, long)]
     exclude: Option<String>,
+
+    /// Case insensitive search
+    #[arg(short, long)]
+    ignore_case: bool,
 }
 
 #[derive(Debug)]
@@ -58,6 +62,10 @@ fn main() -> Result<()> {
     let mut cmd = Command::new("rg");
     cmd.arg("-nP").arg(&args.pattern).args(&args.paths).arg("--no-heading");
 
+    if args.ignore_case {
+        cmd.arg("--ignore-case");
+    }
+
     let output = cmd
         .output()
         .context("failed to run ripgrep (is rg installed?)")?;
@@ -74,7 +82,15 @@ fn main() -> Result<()> {
 
     // Compile exclude pattern if provided
     let exclude_re = args.exclude.as_ref()
-        .map(|pat| Regex::new(pat))
+        .map(|pat| {
+            if args.ignore_case {
+                regex::RegexBuilder::new(pat)
+                    .case_insensitive(true)
+                    .build()
+            } else {
+                Regex::new(pat)
+            }
+        })
         .transpose()
         .context("invalid exclude pattern")?;
 
