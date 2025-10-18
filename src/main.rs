@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Edit all regex matches from many files in one buffer.
 #[derive(Parser, Debug)]
@@ -79,9 +80,10 @@ fn main() -> Result<()> {
 
     // Prepare the virtual editing buffer
     let tmp_dir = tempdir().context("creating temporary directory")?;
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let tmp: Utf8PathBuf = tmp_dir
         .path()
-        .join("fixall-edit.fixall.txt")
+        .join(format!("fixall-edit-{}.fixall.txt", ts))
         .try_into()?;
 
     write_virtual_buffer(&tmp, &args.pattern, &matches, &file_aliases)?;
@@ -182,6 +184,7 @@ fn apply_changes(new_text: &str, file_aliases: &BTreeMap<Utf8PathBuf, String>) -
         file_aliases.iter().map(|(p, a)| (a.clone(), p)).collect();
 
     let mut file_cache: BTreeMap<&Utf8PathBuf, Vec<String>> = BTreeMap::new();
+    let mut has_trailing_newline = true;
 
     for line in new_text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -207,12 +210,21 @@ fn apply_changes(new_text: &str, file_aliases: &BTreeMap<Utf8PathBuf, String>) -
                 } else {
                     eprintln!("Warning: line {lineno} out of range for {path}");
                 }
+
+                if let Some(last) = lines.last() {
+                    has_trailing_newline = last.ends_with('\n');
+                }
             }
         }
     }
 
     for (path, lines) in file_cache {
-        let joined = lines.join("\n") + "\n";
+        let mut joined = lines.join("\n");
+
+        if has_trailing_newline {
+            joined.push('\n');
+        }
+
         fs::write(path, joined)
             .with_context(|| format!("writing changes back to {}", path.as_str()))?;
     }
