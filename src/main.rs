@@ -26,8 +26,8 @@ struct Args {
     editor: String,
 
     /// Maximum number of total matches to include
-    #[arg(short, long)]
-    max_count: Option<usize>,
+    #[arg(short, long, default_value = "150")]
+    max_count: usize,
 
     /// Exclude pattern - matches that also match this regex will be filtered out
     #[arg(short, long)]
@@ -104,12 +104,13 @@ fn main() -> Result<()> {
     }
 
     // Apply max_count limit to total matches
-    if let Some(max_count) = args.max_count {
-        if matches.len() > max_count {
-            debug!("Truncating {} matches to {}", matches.len(), max_count);
-            matches.truncate(max_count);
-        }
-    }
+    let truncated = if matches.len() > args.max_count {
+        debug!("Truncating {} matches to {}", matches.len(), args.max_count);
+        matches.truncate(args.max_count);
+        true
+    } else {
+        false
+    };
 
     // Sort matches by filename then line number for stability
     matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -122,6 +123,16 @@ fn main() -> Result<()> {
     for (path, _, _) in &matches {
         if !path_to_idx.contains_key(path) {
             let idx = files.len();
+
+            // Get next alias or warn if we've run out
+            let alias = match alias_iter.next() {
+                Some(a) => a,
+                None => {
+                    eprintln!("Warning: Too many files (max 702 = 26 + 26*26). Stopping at file {}", path);
+                    break;
+                }
+            };
+
             let content = fs::read_to_string(path)
                 .with_context(|| format!("reading original file {}", path))?;
             let metadata = fs::metadata(path)
@@ -131,7 +142,7 @@ fn main() -> Result<()> {
 
             files.push(FileInfo {
                 path: path.clone(),
-                alias: alias_iter.next().unwrap(),
+                alias,
                 original_content: content,
                 original_mtime: mtime,
             });
@@ -142,12 +153,19 @@ fn main() -> Result<()> {
     // Build match lines
     let mut match_lines: Vec<MatchLine> = Vec::new();
     for (path, lineno, content) in matches {
-        let file_idx = *path_to_idx.get(&path).unwrap();
-        match_lines.push(MatchLine {
-            file_idx,
-            lineno,
-            original_content: content,
-        });
+        // Only include matches from files we have aliases for
+        if let Some(&file_idx) = path_to_idx.get(&path) {
+            match_lines.push(MatchLine {
+                file_idx,
+                lineno,
+                original_content: content,
+            });
+        }
+    }
+
+    if match_lines.is_empty() {
+        println!("No matches to edit.");
+        return Ok(());
     }
 
     // Prepare the virtual editing buffer
@@ -159,6 +177,11 @@ fn main() -> Result<()> {
         .try_into()?;
 
     write_virtual_buffer(&tmp, &args.pattern, &match_lines, &files)?;
+
+    // Warn if matches were truncated
+    if truncated {
+        eprintln!("Warning: Matches truncated to {} (use --max-count to adjust)", args.max_count);
+    }
 
     // Keep original text for change detection
     let original = fs::read_to_string(&tmp)?;
