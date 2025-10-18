@@ -1,0 +1,11 @@
+[package]
+name = "fixall"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+camino = "1.2.1"
+camino-tempfile = "1.4.1"
+clap = { version = "4", features = ["derive"] }
+regex = "1.12.2"
