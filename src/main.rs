@@ -22,11 +22,16 @@ struct Args {
     paths: Vec<Utf8PathBuf>,
 
     /// Editor command (default: "subl --wait")
-    #[arg(short, long, default_value = "subl --wait")]
+    #[arg(short = 'd', long, default_value = "subl --wait")]
     editor: String,
 
+    /// Maximum number of total matches to include
     #[arg(short, long)]
     max_count: Option<usize>,
+
+    /// Exclude pattern - matches that also match this regex will be filtered out
+    #[arg(short, long)]
+    exclude: Option<String>,
 }
 
 #[derive(Debug)]
@@ -53,10 +58,6 @@ fn main() -> Result<()> {
     let mut cmd = Command::new("rg");
     cmd.arg("-nP").arg(&args.pattern).args(&args.paths).arg("--no-heading");
 
-    if let Some(max_count) = args.max_count {
-        cmd.arg("--max-count").arg(max_count.to_string());
-    }
-
     let output = cmd
         .output()
         .context("failed to run ripgrep (is rg installed?)")?;
@@ -71,6 +72,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Compile exclude pattern if provided
+    let exclude_re = args.exclude.as_ref()
+        .map(|pat| Regex::new(pat))
+        .transpose()
+        .context("invalid exclude pattern")?;
+
     // Parse ripgrep output: "path:line:content"
     let mut matches: Vec<(Utf8PathBuf, usize, String)> = Vec::new();
     for line in stdout.lines() {
@@ -78,9 +85,29 @@ fn main() -> Result<()> {
             if let Some((lineno, content)) = rest.split_once(':') {
                 let path = Utf8PathBuf::from(path);
                 if let Ok(line_no) = lineno.parse::<usize>() {
+                    // Apply exclude filter if provided
+                    if let Some(ref exclude_re) = exclude_re {
+                        if exclude_re.is_match(content) {
+                            debug!("Excluding line {}:{} due to exclude pattern", path, line_no);
+                            continue;
+                        }
+                    }
                     matches.push((path, line_no, content.to_string()));
                 }
             }
+        }
+    }
+
+    if matches.is_empty() {
+        println!("No matches found after filtering.");
+        return Ok(());
+    }
+
+    // Apply max_count limit to total matches
+    if let Some(max_count) = args.max_count {
+        if matches.len() > max_count {
+            debug!("Truncating {} matches to {}", matches.len(), max_count);
+            matches.truncate(max_count);
         }
     }
 
