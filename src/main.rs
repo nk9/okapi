@@ -36,11 +36,16 @@ struct Args {
     /// Case insensitive search
     #[arg(short, long)]
     ignore_case: bool,
+
+    /// Working directory - prepend this to all paths before passing to ripgrep
+    #[arg(short, long)]
+    working_directory: Option<Utf8PathBuf>,
 }
 
 #[derive(Debug)]
 struct FileInfo {
     path: Utf8PathBuf,
+    full_path: Utf8PathBuf,
     alias: String,
     original_content: String,
     original_mtime: SystemTime,
@@ -60,7 +65,16 @@ fn main() -> Result<()> {
 
     // Run ripgrep to get matches
     let mut cmd = Command::new("rg");
-    cmd.arg("-nP").arg(&args.pattern).args(&args.paths).arg("--no-heading");
+    cmd.arg("-nP").arg(&args.pattern);
+
+    // Prepend working directory to paths if provided
+    let search_paths: Vec<Utf8PathBuf> = if let Some(ref wd) = args.working_directory {
+        args.paths.iter().map(|p| wd.join(p)).collect()
+    } else {
+        args.paths.clone()
+    };
+
+    cmd.args(&search_paths).arg("--no-heading");
 
     if args.ignore_case {
         cmd.arg("--ignore-case");
@@ -99,7 +113,15 @@ fn main() -> Result<()> {
     for line in stdout.lines() {
         if let Some((path, rest)) = line.split_once(':') {
             if let Some((lineno, content)) = rest.split_once(':') {
-                let path = Utf8PathBuf::from(path);
+                let mut path = Utf8PathBuf::from(path);
+
+                // Strip working directory prefix if present
+                if let Some(ref wd) = args.working_directory {
+                    if let Ok(stripped) = path.strip_prefix(wd) {
+                        path = stripped.to_path_buf();
+                    }
+                }
+
                 if let Ok(line_no) = lineno.parse::<usize>() {
                     // Apply exclude filter if provided
                     if let Some(ref exclude_re) = exclude_re {
@@ -149,15 +171,23 @@ fn main() -> Result<()> {
                 }
             };
 
-            let content = fs::read_to_string(path)
-                .with_context(|| format!("reading original file {}", path))?;
-            let metadata = fs::metadata(path)
-                .with_context(|| format!("reading metadata for {}", path))?;
+            // Build full path for reading file
+            let full_path = if let Some(ref wd) = args.working_directory {
+                wd.join(path)
+            } else {
+                path.clone()
+            };
+
+            let content = fs::read_to_string(&full_path)
+                .with_context(|| format!("reading original file {}", full_path))?;
+            let metadata = fs::metadata(&full_path)
+                .with_context(|| format!("reading metadata for {}", full_path))?;
             let mtime = metadata.modified()
-                .with_context(|| format!("getting modification time for {}", path))?;
+                .with_context(|| format!("getting modification time for {}", full_path))?;
 
             files.push(FileInfo {
                 path: path.clone(),
+                full_path,
                 alias,
                 original_content: content,
                 original_mtime: mtime,
@@ -286,7 +316,7 @@ fn write_virtual_buffer(
     writeln!(file)?;
     writeln!(file, "# --- File Aliases ---")?;
     for f in files {
-        writeln!(file, "# {:>2} = {}", f.alias, f.path)?;
+        writeln!(file, "# {:>2} = {}", f.alias, f.full_path)?;
     }
 
     Ok(())
@@ -353,10 +383,10 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
         let file = &files[file_idx];
 
         // Check if file was modified since we started
-        let current_metadata = fs::metadata(&file.path)
-            .with_context(|| format!("reading current metadata for {}", file.path))?;
+        let current_metadata = fs::metadata(&file.full_path)
+            .with_context(|| format!("reading current metadata for {}", file.full_path))?;
         let current_mtime = current_metadata.modified()
-            .with_context(|| format!("getting current modification time for {}", file.path))?;
+            .with_context(|| format!("getting current modification time for {}", file.full_path))?;
 
         if current_mtime != file.original_mtime {
             eprintln!("Error: file {} was modified during editing session, skipping", file.path);
@@ -386,8 +416,8 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
             joined.push('\n');
         }
 
-        fs::write(&file.path, joined)
-            .with_context(|| format!("writing changes back to {}", file.path.as_str()))?;
+        fs::write(&file.full_path, joined)
+            .with_context(|| format!("writing changes back to {}", file.full_path))?;
 
         println!("Updated {}", file.path);
     }
