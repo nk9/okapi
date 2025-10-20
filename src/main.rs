@@ -16,10 +16,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
-    /// PCRE-compatible regex pattern (passed to ripgrep -P)
+    /// PCRE-compatible regex pattern (passed to ugrep -P)
     pattern: String,
 
-    /// Files or directories to search (passed to rg)
+    /// Files or directories to search (passed to ugrep)
     #[arg(value_name = "PATHS", num_args = 0..)]
     paths: Vec<Utf8PathBuf>,
 
@@ -27,7 +27,7 @@ struct Args {
     #[arg(short = 'd', long, default_value = "subl --wait")]
     editor: String,
 
-    /// Maximum number of total matches to include
+    /// Maximum number of total matches to include. Hard max at 18,278
     #[arg(short, long, default_value = "150")]
     max_count: usize,
 
@@ -39,9 +39,13 @@ struct Args {
     #[arg(short, long)]
     ignore_case: bool,
 
-    /// Working directory - prepend this to all paths before passing to ripgrep
+    /// Working directory - prepend this to all paths before passing to ugrep
     #[arg(short, long)]
     working_directory: Option<Utf8PathBuf>,
+
+    /// Column range filter (e.g., "0-35", "3-20")
+    #[arg(short, long)]
+    columns: Option<String>,
 }
 
 #[derive(Debug)]
@@ -65,9 +69,16 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // Run ripgrep to get matches
-    let mut cmd = Command::new("rg");
-    cmd.arg("-nP").arg(&args.pattern);
+    // Parse column range if provided
+    let column_range = if let Some(ref col_str) = args.columns {
+        Some(range_parser::parse(col_str.as_str()).context("invalid column range")?)
+    } else {
+        None
+    };
+
+    // Run ugrep to get matches
+    let mut cmd = Command::new("ugrep");
+    cmd.arg("-nrkP").arg("--ignore-files").arg(&args.pattern);
 
     // Prepend working directory to paths if provided
     let search_paths: Vec<Utf8PathBuf> = if let Some(ref wd) = args.working_directory {
@@ -76,7 +87,7 @@ fn main() -> Result<()> {
         args.paths.clone()
     };
 
-    cmd.args(&search_paths).arg("--no-heading");
+    cmd.args(&search_paths);
 
     if args.ignore_case {
         cmd.arg("--ignore-case");
@@ -84,10 +95,11 @@ fn main() -> Result<()> {
 
     let output = cmd
         .output()
-        .context("failed to run ripgrep (is rg installed?)")?;
+        .context("failed to run ugrep (is ugrep installed?)")?;
 
     if !output.status.success() {
-        eprintln!("ripgrep exited with status {:?}", output.status.code());
+        eprintln!("ugrep exited with status {:?}", output.status.code());
+        eprintln!("Error: {:?}", &output.stderr);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -110,30 +122,43 @@ fn main() -> Result<()> {
         .transpose()
         .context("invalid exclude pattern")?;
 
-    // Parse ripgrep output: "path:line:content"
+    // Parse ugrep output: "path:line:column:content"
     let mut matches: Vec<(Utf8PathBuf, usize, String)> = Vec::new();
     for line in stdout.lines() {
-        if let Some((path, rest)) = line.split_once(':') {
-            if let Some((lineno, content)) = rest.split_once(':') {
-                let mut path = Utf8PathBuf::from(path);
+        if let Some((path, rest)) = line.split_once(':')
+            && let Some((lineno, rest2)) = rest.split_once(':')
+            && let Some((colno, content)) = rest2.split_once(':')
+        {
+            let mut path = Utf8PathBuf::from(path);
 
-                // Strip working directory prefix if present
-                if let Some(ref wd) = args.working_directory {
-                    if let Ok(stripped) = path.strip_prefix(wd) {
-                        path = stripped.to_path_buf();
-                    }
+            // Strip working directory prefix if present
+            if let Some(ref wd) = args.working_directory
+                && let Ok(stripped) = path.strip_prefix(wd)
+            {
+                path = stripped.to_path_buf();
+            }
+
+            if let Ok(line_no) = lineno.parse::<usize>() {
+                // Parse column number and apply column filter if provided
+                if let Ok(col_no) = colno.parse::<usize>()
+                    && let Some(ref range) = column_range
+                    && !range.contains(&col_no)
+                {
+                    debug!(
+                        "Excluding {}:{} (column {}) - outside range",
+                        path, line_no, col_no
+                    );
+                    continue;
                 }
 
-                if let Ok(line_no) = lineno.parse::<usize>() {
-                    // Apply exclude filter if provided
-                    if let Some(ref exclude_re) = exclude_re {
-                        if exclude_re.is_match(content) {
-                            debug!("Excluding line {}:{} due to exclude pattern", path, line_no);
-                            continue;
-                        }
-                    }
-                    matches.push((path, line_no, content.to_string()));
+                // Apply exclude filter if provided
+                if let Some(ref exclude_re) = exclude_re
+                    && exclude_re.is_match(content)
+                {
+                    debug!("Excluding line {}:{} due to exclude pattern", path, line_no);
+                    continue;
                 }
+                matches.push((path, line_no, content.to_string()));
             }
         }
     }
