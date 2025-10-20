@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use camino_tempfile::tempdir;
 use clap::Parser;
+use itertools::iproduct;
+use itertools::Itertools;
 use log::debug;
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -95,12 +97,12 @@ fn main() -> Result<()> {
     }
 
     // Compile exclude pattern if provided
-    let exclude_re = args.exclude.as_ref()
+    let exclude_re = args
+        .exclude
+        .as_ref()
         .map(|pat| {
             if args.ignore_case {
-                regex::RegexBuilder::new(pat)
-                    .case_insensitive(true)
-                    .build()
+                regex::RegexBuilder::new(pat).case_insensitive(true).build()
             } else {
                 Regex::new(pat)
             }
@@ -156,7 +158,7 @@ fn main() -> Result<()> {
     // Build file info with aliases
     let mut files: Vec<FileInfo> = Vec::new();
     let mut path_to_idx: BTreeMap<Utf8PathBuf, usize> = BTreeMap::new();
-    let mut alias_iter = generate_alias();
+    let mut alias_iter = alias_iter();
 
     for (path, _, _) in &matches {
         if !path_to_idx.contains_key(path) {
@@ -166,7 +168,10 @@ fn main() -> Result<()> {
             let alias = match alias_iter.next() {
                 Some(a) => a,
                 None => {
-                    eprintln!("Warning: Too many files (max 702 = 26 + 26*26). Stopping at file {}", path);
+                    eprintln!(
+                        "Warning: Too many files (there are only A..ZZZ). Stopping at file {}",
+                        path
+                    );
                     break;
                 }
             };
@@ -182,7 +187,8 @@ fn main() -> Result<()> {
                 .with_context(|| format!("reading original file {}", full_path))?;
             let metadata = fs::metadata(&full_path)
                 .with_context(|| format!("reading metadata for {}", full_path))?;
-            let mtime = metadata.modified()
+            let mtime = metadata
+                .modified()
                 .with_context(|| format!("getting modification time for {}", full_path))?;
 
             files.push(FileInfo {
@@ -226,7 +232,10 @@ fn main() -> Result<()> {
 
     // Warn if matches were truncated
     if truncated {
-        eprintln!("Warning: Matches truncated to {} (use --max-count to adjust)", args.max_count);
+        eprintln!(
+            "Warning: Matches truncated to {} (use --max-count to adjust)",
+            args.max_count
+        );
     }
 
     // Keep original text for change detection
@@ -256,28 +265,41 @@ fn main() -> Result<()> {
 }
 
 /// Generate alternating-length aliases (A, AA, B, AB, C, AC, …)
-fn generate_alias() -> impl Iterator<Item = String> {
-    let letters: Vec<char> = (b'A'..=b'Z').map(|c| c as char).collect();
+pub fn alias_iter() -> impl Iterator<Item = String> {
+    let alphabet = 'A'..='Z';
 
-    let mut v = Vec::new();
+    // 1. Create iterators that produce owned Strings, not borrowing any local variables.
+    //    We clone the `alphabet` range for each product.
+    let singles = alphabet.clone().map(|c| c.to_string());
 
-    // First 52: A, AA, B, AB, C, AC, ...
-    for &c in &letters {
-        v.push(c.to_string());
-        v.push(format!("A{}", c));
-    }
+    let doubles =
+        iproduct!(alphabet.clone(), alphabet.clone()).map(|(c1, c2)| format!("{}{}", c1, c2));
 
-    // Beyond first 52: interleave BA, CA, BB, CB, BC, CC, ...
-    for &first in &letters {
-        for &second in &letters {
-            // Skip any already yielded in first 52 (A..Z and A*)
-            if first != 'A' && second != 'A' {
-                v.push(format!("{}{}", first, second));
-            }
-        }
-    }
+    let triples = iproduct!(alphabet.clone(), alphabet.clone(), alphabet.clone())
+        .map(|(c1, c2, c3)| format!("{}{}{}", c1, c2, c3));
 
-    v.into_iter()
+    // 2. Eagerly collect all generated strings into a Vec.
+    let all_strings: Vec<String> = singles.chain(doubles).chain(triples).collect();
+
+    // 3. Build the final iterator chain by consuming the vector.
+    //    Since we use `into_iter()`, the entire subsequent chain operates on owned data.
+    let final_sequence: Vec<String> = all_strings
+        .into_iter()
+        .chunks(26)
+        .into_iter()
+        .map(|chunk| chunk.collect_vec())
+        .chunks(2)
+        .into_iter()
+        .flat_map(|mut pair_of_chunks| {
+            let first = pair_of_chunks.next().unwrap();
+            let second = pair_of_chunks.next().unwrap_or_default();
+
+            first.into_iter().interleave(second.into_iter())
+        })
+        .collect();
+
+    // Return a simple iterator over the now-owned final sequence.
+    final_sequence.into_iter()
 }
 
 fn write_virtual_buffer(
@@ -306,7 +328,7 @@ fn write_virtual_buffer(
         let alias = &files[m.file_idx].alias;
         writeln!(
             file,
-            "{alias:>2} {lineno:>width$} | {content}",
+            "{alias:>3} {lineno:>width$} | {content}",
             lineno = m.lineno,
             content = m.original_content,
             width = max_line_len
@@ -316,7 +338,7 @@ fn write_virtual_buffer(
     writeln!(file)?;
     writeln!(file, "# --- File Aliases ---")?;
     for f in files {
-        writeln!(file, "# {:>2} = {}", f.alias, f.full_path)?;
+        writeln!(file, "# {:>3} = {}", f.alias, f.full_path)?;
     }
 
     Ok(())
@@ -375,7 +397,10 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
     // Group changes by file
     let mut files_to_update: BTreeMap<usize, Vec<(usize, String)>> = BTreeMap::new();
     for ((file_idx, lineno), content) in changes {
-        files_to_update.entry(file_idx).or_default().push((lineno, content));
+        files_to_update
+            .entry(file_idx)
+            .or_default()
+            .push((lineno, content));
     }
 
     // Apply changes to each file
@@ -385,18 +410,23 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
         // Check if file was modified since we started
         let current_metadata = fs::metadata(&file.full_path)
             .with_context(|| format!("reading current metadata for {}", file.full_path))?;
-        let current_mtime = current_metadata.modified()
+        let current_mtime = current_metadata
+            .modified()
             .with_context(|| format!("getting current modification time for {}", file.full_path))?;
 
         if current_mtime != file.original_mtime {
-            eprintln!("Error: file {} was modified during editing session, skipping", file.path);
+            eprintln!(
+                "Error: file {} was modified during editing session, skipping",
+                file.path
+            );
             continue;
         }
 
         // Preserve whether original had trailing newline
         let has_trailing_newline = file.original_content.ends_with('\n');
 
-        let mut lines: Vec<String> = file.original_content
+        let mut lines: Vec<String> = file
+            .original_content
             .lines()
             .map(|s| s.to_string())
             .collect();
