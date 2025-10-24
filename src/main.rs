@@ -16,16 +16,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
-    /// PCRE-compatible regex pattern (passed to ugrep -P)
+    /// PCRE-compatible regex pattern (passed to ripgrep -P)
     pattern: String,
 
-    /// Files or directories to search (passed to ugrep)
+    /// Files or directories to search (passed to ripgrep)
     #[arg(value_name = "PATHS", num_args = 0..)]
     paths: Vec<Utf8PathBuf>,
 
     /// Editor command (default: "subl --wait")
     #[arg(short = 'd', long, default_value = "subl --wait")]
     editor: String,
+
+    // Only search files metching type. Passed directly to ripgrep's --type argument.
+    #[arg(short, long = "type")]
+    r#type: Option<String>,
 
     /// Maximum number of total matches to include. Hard max at 18,278
     #[arg(short, long, default_value = "150")]
@@ -39,7 +43,7 @@ struct Args {
     #[arg(short, long)]
     ignore_case: bool,
 
-    /// Working directory - prepend this to all paths before passing to ugrep
+    /// Working directory - prepend this to all paths before passing to ripgrep
     #[arg(short, long)]
     working_directory: Option<Utf8PathBuf>,
 
@@ -85,9 +89,13 @@ fn main() -> Result<()> {
         None
     };
 
-    // Run ugrep to get matches
-    let mut cmd = Command::new("ugrep");
-    cmd.arg("-nrkP").arg("--ignore-files").arg(&args.pattern);
+    // Run ripgrep to get matches
+    let mut cmd = Command::new("rg");
+    cmd.arg("-nP")
+        .arg("--ignore-files")
+        .arg("--column")
+        .arg("--no-heading")
+        .arg(&args.pattern);
 
     // Prepend working directory to paths if provided
     let search_paths: Vec<Utf8PathBuf> = if let Some(ref wd) = args.working_directory {
@@ -102,12 +110,16 @@ fn main() -> Result<()> {
         cmd.arg("--ignore-case");
     }
 
+    if let Some(typ) = args.r#type {
+        cmd.arg("--type").arg(typ);
+    }
+
     let output = cmd
         .output()
-        .context("failed to run ugrep (is ugrep installed?)")?;
+        .context("failed to run ripgrep (is rg installed?)")?;
 
     if !output.status.success() {
-        eprintln!("ugrep exited with status {:?}", output.status.code());
+        eprintln!("ripgrep exited with status {:?}", output.status.code());
         eprintln!("Error: {:?}", &output.stderr);
     }
 
@@ -131,7 +143,7 @@ fn main() -> Result<()> {
         .transpose()
         .context("invalid exclude pattern")?;
 
-    // Parse ugrep output: "path:line:column:content"
+    // Parse ripgrep output: "path:line:column:content"
     let mut matches: Vec<(Utf8PathBuf, usize, String)> = Vec::new();
     for line in stdout.lines() {
         if let Some((path, rest)) = line.split_once(':')
