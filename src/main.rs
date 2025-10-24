@@ -43,7 +43,7 @@ struct Args {
     #[arg(short, long)]
     working_directory: Option<Utf8PathBuf>,
 
-    /// Column range filter (e.g., "0-35", "3-20")
+    /// Column range filter (e.g., "..35", "3-20", "15.."). Default max col is 200.
     #[arg(short, long)]
     columns: Option<String>,
 }
@@ -70,8 +70,17 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     // Parse column range if provided
-    let column_range = if let Some(ref col_str) = args.columns {
-        Some(range_parser::parse(col_str.as_str()).context("invalid column range")?)
+    let column_range = if let Some(mut col_str) = args.columns {
+        if col_str.starts_with("..") {
+            col_str.insert(0, '0');
+        } else if col_str.ends_with("..") {
+            col_str.push_str("200");
+        }
+
+        Some(
+            range_parser::parse_with(col_str.as_str(), ";", "..")
+                .context("invalid column range")?,
+        )
     } else {
         None
     };
