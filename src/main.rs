@@ -191,10 +191,15 @@ fn main() -> Result<()> {
 
     // Apply max_count limit to total matches
     let truncated = if matches.len() > args.max_count {
-        debug!("Truncating {} matches to {}", matches.len(), args.max_count);
+        eprintln!(
+            "Truncating {} matches to {} (use --max-count to adjust)",
+            matches.len(),
+            args.max_count
+        );
         matches.truncate(args.max_count);
         true
     } else {
+        println!("Showing {} matches", matches.len());
         false
     };
 
@@ -275,14 +280,6 @@ fn main() -> Result<()> {
         .try_into()?;
 
     write_virtual_buffer(&tmp, &args.pattern, &match_lines, &files)?;
-
-    // Warn if matches were truncated
-    if truncated {
-        eprintln!(
-            "Warning: Matches truncated to {} (use --max-count to adjust)",
-            args.max_count
-        );
-    }
 
     // Keep original text for change detection
     let original = fs::read_to_string(&tmp)?;
