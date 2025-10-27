@@ -119,13 +119,13 @@ fn main() -> Result<()> {
         .context("failed to run ripgrep (is rg installed?)")?;
 
     if !output.status.success() {
-        eprintln!("ripgrep exited with status {:?}", output.status.code());
-        eprintln!("Error: {:?}", &output.stderr);
+        debug!("ripgrep exited with status {:?}", output.status.code());
+        debug!("Error: {:?}", &output.stderr);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if stdout.trim().is_empty() {
-        println!("No matches found.");
+        eprintln!("No matches found.");
         return Ok(());
     }
 
@@ -190,18 +190,16 @@ fn main() -> Result<()> {
     }
 
     // Apply max_count limit to total matches
-    let truncated = if matches.len() > args.max_count {
+    if matches.len() > args.max_count {
         eprintln!(
             "Truncating {} matches to {} (use --max-count to adjust)",
             matches.len(),
             args.max_count
         );
         matches.truncate(args.max_count);
-        true
     } else {
         println!("Showing {} matches", matches.len());
-        false
-    };
+    }
 
     // Sort matches by filename then line number for stability
     matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
