@@ -3,7 +3,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use camino_tempfile::tempdir;
 use clap::Parser;
 use itertools::iproduct;
-use itertools::Itertools;
 use log::debug;
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -37,7 +36,7 @@ struct Args {
 
     /// Exclude pattern - matches that also match this regex will be filtered out
     #[arg(short, long)]
-    exclude: Option<String>,
+    exclude: Vec<String>,
 
     /// Case insensitive search
     #[arg(short, long)]
@@ -130,18 +129,19 @@ fn main() -> Result<()> {
     }
 
     // Compile exclude pattern if provided
-    let exclude_re = args
+    let exclude_regexes: Result<Vec<Regex>> = args
         .exclude
-        .as_ref()
+        .iter()
         .map(|pat| {
             if args.ignore_case {
                 regex::RegexBuilder::new(pat).case_insensitive(true).build()
             } else {
                 Regex::new(pat)
             }
+            .context(format!("invalid exclude pattern: {}", pat))
         })
-        .transpose()
-        .context("invalid exclude pattern")?;
+        .collect();
+    let exclude_regexes = exclude_regexes?;
 
     // Parse ripgrep output: "path:line:column:content"
     let mut matches: Vec<(Utf8PathBuf, usize, String)> = Vec::new();
@@ -172,10 +172,8 @@ fn main() -> Result<()> {
                     continue;
                 }
 
-                // Apply exclude filter if provided
-                if let Some(ref exclude_re) = exclude_re
-                    && exclude_re.is_match(content)
-                {
+                // Apply exclude filters if provided
+                if exclude_regexes.iter().any(|re| re.is_match(content)) {
                     debug!("Excluding line {}:{} due to exclude pattern", path, line_no);
                     continue;
                 }
