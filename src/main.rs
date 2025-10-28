@@ -305,7 +305,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Generate alternating-length aliases (A, AA, B, AB, C, AC, …)
 pub fn alias_iter() -> impl Iterator<Item = String> {
     let alphabet = 'A'..='Z';
 
@@ -319,28 +318,7 @@ pub fn alias_iter() -> impl Iterator<Item = String> {
     let triples = iproduct!(alphabet.clone(), alphabet.clone(), alphabet.clone())
         .map(|(c1, c2, c3)| format!("{}{}{}", c1, c2, c3));
 
-    // 2. Eagerly collect all generated strings into a Vec.
-    let all_strings: Vec<String> = singles.chain(doubles).chain(triples).collect();
-
-    // 3. Build the final iterator chain by consuming the vector.
-    //    Since we use `into_iter()`, the entire subsequent chain operates on owned data.
-    let final_sequence: Vec<String> = all_strings
-        .into_iter()
-        .chunks(26)
-        .into_iter()
-        .map(|chunk| chunk.collect_vec())
-        .chunks(2)
-        .into_iter()
-        .flat_map(|mut pair_of_chunks| {
-            let first = pair_of_chunks.next().unwrap();
-            let second = pair_of_chunks.next().unwrap_or_default();
-
-            first.into_iter().interleave(second.into_iter())
-        })
-        .collect();
-
-    // Return a simple iterator over the now-owned final sequence.
-    final_sequence.into_iter()
+    singles.chain(doubles).chain(triples)
 }
 
 fn write_virtual_buffer(
@@ -365,11 +343,22 @@ fn write_virtual_buffer(
         .max()
         .unwrap_or(1);
 
+    let mut current_file_idx = None;
+    let mut use_heavy_pipe = false;
+
     for m in match_lines {
+        // Switch pipe character when file changes
+        if current_file_idx != Some(m.file_idx) {
+            current_file_idx = Some(m.file_idx);
+            use_heavy_pipe = !use_heavy_pipe;
+        }
+
         let alias = &files[m.file_idx].alias;
+        let pipe = if use_heavy_pipe { "▓" } else { "░" };
+
         writeln!(
             file,
-            "{alias:>3} {lineno:>width$} | {content}",
+            "{alias:>3} {lineno:>width$} {pipe} {content}",
             lineno = m.lineno,
             content = m.original_content,
             width = max_line_len
@@ -381,12 +370,11 @@ fn write_virtual_buffer(
     for f in files {
         writeln!(file, "# {:>3} = {}", f.alias, f.full_path)?;
     }
-
     Ok(())
 }
 
 fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
-    let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+\|\s(.*)$")?;
+    let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s(.*)$")?;
 
     // Build alias -> file index map
     let alias_to_idx: BTreeMap<&str, usize> = files
