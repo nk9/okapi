@@ -299,7 +299,6 @@ fn main() -> Result<()> {
 
     apply_changes(&new_text, &files)?;
 
-    println!("Applied edits successfully.");
     Ok(())
 }
 
@@ -373,6 +372,8 @@ fn write_virtual_buffer(
 
 fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
     let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s(.*)$")?;
+    let all_files_count = files.len();
+    let mut all_lines_count = 0;
 
     // Build alias -> file index map
     let alias_to_idx: BTreeMap<&str, usize> = files
@@ -390,6 +391,7 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
         }
 
         if let Some(cap) = line_re.captures(line) {
+            all_lines_count += 1;
             let alias = cap.get(1).unwrap().as_str();
             let lineno: usize = cap.get(2).unwrap().as_str().parse()?;
             let new_content = cap.get(3).unwrap().as_str();
@@ -431,6 +433,8 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
     }
 
     // Apply changes to each file
+    let mut line_change_count = 0;
+    let mut file_change_count = 0;
     for (file_idx, file_changes) in files_to_update {
         let file = &files[file_idx];
 
@@ -462,6 +466,7 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
         for (lineno, new_content) in file_changes {
             if let Some(line_slot) = lines.get_mut(lineno - 1) {
                 *line_slot = new_content;
+                line_change_count += 1;
             } else {
                 eprintln!("Warning: line {lineno} out of range for {}", file.path);
             }
@@ -475,9 +480,22 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
 
         fs::write(&file.full_path, joined)
             .with_context(|| format!("writing changes back to {}", file.full_path))?;
+        file_change_count += 1;
 
         println!("Updated {}", file.path);
     }
+
+    // Write out summary. `all_lines_count` will always be the largest
+    let w = (all_lines_count as f64).log10().ceil() as usize;
+    println!(
+        "\n  Changed: {:>w$} line(s), {:>w$} file(s)",
+        line_change_count, file_change_count,
+    );
+    println!(
+        "Unchanged: {:>w$} line(s), {:>w$} file(s)",
+        all_lines_count - line_change_count,
+        all_files_count - file_change_count,
+    );
 
     Ok(())
 }
