@@ -11,6 +11,9 @@ use std::io::Write;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod file_alias;
+use file_alias::FileAlias;
+
 /// Edit all regex matches from many files in one buffer.
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -55,14 +58,14 @@ struct Args {
 struct FileInfo {
     path: Utf8PathBuf,
     full_path: Utf8PathBuf,
-    alias: String,
+    alias: FileAlias,
     original_content: String,
     original_mtime: SystemTime,
 }
 
 #[derive(Debug)]
 struct MatchLine {
-    alias: String,
+    alias: FileAlias,
     lineno: usize,
     original_content: String,
 }
@@ -203,8 +206,8 @@ fn main() -> Result<()> {
     matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
     // Build file info with aliases
-    let mut files: BTreeMap<String, FileInfo> = BTreeMap::new();
-    let mut path_to_alias: BTreeMap<Utf8PathBuf, String> = BTreeMap::new();
+    let mut files: BTreeMap<FileAlias, FileInfo> = BTreeMap::new();
+    let mut path_to_alias: BTreeMap<Utf8PathBuf, FileAlias> = BTreeMap::new();
     let mut alias_iter = alias_iter();
 
     for (path, _, _) in &matches {
@@ -236,8 +239,8 @@ fn main() -> Result<()> {
                 .modified()
                 .with_context(|| format!("getting modification time for {}", full_path))?;
 
-            path_to_alias.insert(path.clone(), alias.clone());
-            files.entry(alias.clone()).or_insert(FileInfo {
+            path_to_alias.insert(path.clone(), alias);
+            files.entry(alias).or_insert(FileInfo {
                 path: path.clone(),
                 full_path,
                 alias,
@@ -251,9 +254,9 @@ fn main() -> Result<()> {
     let mut match_lines: Vec<MatchLine> = Vec::new();
     for (path, lineno, content) in matches {
         // Only include matches from files we have aliases for
-        if let Some(alias) = path_to_alias.get(&path) {
+        if let Some(&alias) = path_to_alias.get(&path) {
             match_lines.push(MatchLine {
-                alias: alias.to_string(),
+                alias,
                 lineno,
                 original_content: content,
             });
@@ -300,18 +303,16 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-pub fn alias_iter() -> impl Iterator<Item = String> {
+pub fn alias_iter() -> impl Iterator<Item = FileAlias> {
     let alphabet = 'A'..='Z';
 
-    // 1. Create iterators that produce owned Strings, not borrowing any local variables.
-    //    We clone the `alphabet` range for each product.
-    let singles = alphabet.clone().map(|c| c.to_string());
+    let singles = alphabet.clone().map(|c| FileAlias::new(&[c]));
 
     let doubles =
-        iproduct!(alphabet.clone(), alphabet.clone()).map(|(c1, c2)| format!("{}{}", c1, c2));
+        iproduct!(alphabet.clone(), alphabet.clone()).map(|(c1, c2)| FileAlias::new(&[c1, c2]));
 
     let triples = iproduct!(alphabet.clone(), alphabet.clone(), alphabet.clone())
-        .map(|(c1, c2, c3)| format!("{}{}{}", c1, c2, c3));
+        .map(|(c1, c2, c3)| FileAlias::new(&[c1, c2, c3]));
 
     singles.chain(doubles).chain(triples)
 }
@@ -320,7 +321,7 @@ fn write_virtual_buffer(
     tmp: &Utf8Path,
     regex: &str,
     match_lines: &[MatchLine],
-    files: &BTreeMap<String, FileInfo>,
+    files: &BTreeMap<FileAlias, FileInfo>,
 ) -> Result<()> {
     let mut file = fs::File::create(tmp)?;
 
@@ -373,13 +374,13 @@ fn write_virtual_buffer(
     Ok(())
 }
 
-fn apply_changes(new_text: &str, files: &BTreeMap<String, FileInfo>) -> Result<()> {
+fn apply_changes(new_text: &str, files: &BTreeMap<FileAlias, FileInfo>) -> Result<()> {
     let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s?(.*)$")?;
     let all_files_count = files.len();
     let mut all_lines_count = 0;
 
     // Track changes: alias -> lineno -> Option<new_content>
-    let mut files_to_update: HashMap<&str, HashMap<usize, Option<String>>> = HashMap::new();
+    let mut files_to_update: HashMap<FileAlias, HashMap<usize, Option<String>>> = HashMap::new();
 
     for line in new_text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -395,12 +396,13 @@ fn apply_changes(new_text: &str, files: &BTreeMap<String, FileInfo>) -> Result<(
 
         if let Some(cap) = line_re.captures(line) {
             all_lines_count += 1;
-            let alias = cap.get(1).unwrap().as_str();
+            let alias_str = cap.get(1).unwrap().as_str();
+            let alias = FileAlias::from_str(alias_str);
             let lineno: usize = cap.get(2).unwrap().as_str().parse()?;
             let new_content = cap.get(3).unwrap().as_str();
 
             // Directly look up the file by its alias in the `files` BTreeMap.
-            if let Some(file) = files.get(alias) {
+            if let Some(file) = files.get(&alias) {
                 let original_lines: Vec<&str> = file.original_content.lines().collect();
 
                 if let Some(&original_line) = original_lines.get(lineno - 1) {
@@ -419,7 +421,6 @@ fn apply_changes(new_text: &str, files: &BTreeMap<String, FileInfo>) -> Result<(
                     };
 
                     if let Some(content) = change {
-                        // Use the alias itself as the key for the outer map.
                         files_to_update
                             .entry(alias)
                             .or_default()
@@ -438,8 +439,11 @@ fn apply_changes(new_text: &str, files: &BTreeMap<String, FileInfo>) -> Result<(
     // Apply changes to each file
     let mut line_change_count = 0;
     let mut file_change_count = 0;
-    for (file_idx, mut file_changes) in files_to_update {
-        let file = &files[file_idx];
+    for (file_alias, mut file_changes) in files_to_update {
+        let Some(file) = files.get(&file_alias) else {
+            error!("Couldn't find file with alias '{file_alias}'");
+            continue;
+        };
 
         // Check if file was modified since we started
         let current_metadata = fs::metadata(&file.full_path)
