@@ -3,7 +3,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use camino_tempfile::tempdir;
 use clap::Parser;
 use itertools::iproduct;
-use log::debug;
+use log::{debug, error, warn};
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs;
@@ -398,8 +398,8 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
         // Check for joined lines (multiple pipe characters)
         let pipe_count = line.chars().filter(|&c| c == '▓' || c == '░').count();
         if pipe_count > 1 {
-            eprintln!("Error: Detected concatenation, skipping all joined lines:");
-            eprintln!("  {}", line);
+            error!("Detected concatenation, skipping all joined lines:");
+            error!("  {}", line);
             continue;
         }
 
@@ -463,8 +463,8 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
             .with_context(|| format!("getting current modification time for {}", file.full_path))?;
 
         if current_mtime != file.original_mtime {
-            eprintln!(
-                "Error: file {} was modified during editing session, skipping",
+            error!(
+                "file {} was modified during editing session, skipping",
                 file.path
             );
             continue;
@@ -503,7 +503,7 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
 
         // Any remaining changes are for line numbers outside the original file's range.
         for (lineno, _) in changes {
-            eprintln!("Warning: line {lineno} out of range for {}", file.path);
+            warn!("line {lineno} out of range for {}", file.path);
         }
 
         // Reconstruct file with proper trailing newline handling
