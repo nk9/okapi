@@ -62,7 +62,7 @@ struct FileInfo {
 
 #[derive(Debug)]
 struct MatchLine {
-    file_idx: usize,
+    alias: String,
     lineno: usize,
     original_content: String,
 }
@@ -203,14 +203,12 @@ fn main() -> Result<()> {
     matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
     // Build file info with aliases
-    let mut files: Vec<FileInfo> = Vec::new();
-    let mut path_to_idx: BTreeMap<Utf8PathBuf, usize> = BTreeMap::new();
+    let mut files: BTreeMap<String, FileInfo> = BTreeMap::new();
+    let mut path_to_alias: BTreeMap<Utf8PathBuf, String> = BTreeMap::new();
     let mut alias_iter = alias_iter();
 
     for (path, _, _) in &matches {
-        if !path_to_idx.contains_key(path) {
-            let idx = files.len();
-
+        if !path_to_alias.contains_key(path) {
             // Get next alias or warn if we've run out
             let alias = match alias_iter.next() {
                 Some(a) => a,
@@ -238,14 +236,14 @@ fn main() -> Result<()> {
                 .modified()
                 .with_context(|| format!("getting modification time for {}", full_path))?;
 
-            files.push(FileInfo {
+            path_to_alias.insert(path.clone(), alias.clone());
+            files.entry(alias.clone()).or_insert(FileInfo {
                 path: path.clone(),
                 full_path,
                 alias,
                 original_content: content,
                 original_mtime: mtime,
             });
-            path_to_idx.insert(path.clone(), idx);
         }
     }
 
@@ -253,9 +251,9 @@ fn main() -> Result<()> {
     let mut match_lines: Vec<MatchLine> = Vec::new();
     for (path, lineno, content) in matches {
         // Only include matches from files we have aliases for
-        if let Some(&file_idx) = path_to_idx.get(&path) {
+        if let Some(alias) = path_to_alias.get(&path) {
             match_lines.push(MatchLine {
-                file_idx,
+                alias: alias.to_string(),
                 lineno,
                 original_content: content,
             });
@@ -322,7 +320,7 @@ fn write_virtual_buffer(
     tmp: &Utf8Path,
     regex: &str,
     match_lines: &[MatchLine],
-    files: &[FileInfo],
+    files: &BTreeMap<String, FileInfo>,
 ) -> Result<()> {
     let mut file = fs::File::create(tmp)?;
 
@@ -344,22 +342,23 @@ fn write_virtual_buffer(
         .max()
         .unwrap_or(1);
 
-    let mut current_file_idx = None;
+    let mut current_file_alias = None;
     let mut use_heavy_pipe = false;
 
     for m in match_lines {
         // Switch pipe character when file changes
-        if current_file_idx != Some(m.file_idx) {
-            current_file_idx = Some(m.file_idx);
+        let next_alias = Some(m.alias.clone());
+        if current_file_alias != next_alias {
+            current_file_alias = next_alias;
             use_heavy_pipe = !use_heavy_pipe;
         }
 
-        let alias = &files[m.file_idx].alias;
         let pipe = if use_heavy_pipe { "▓" } else { "░" };
 
         writeln!(
             file,
-            "{alias:>3} {lineno:>width$} {pipe} {content}",
+            "{:>3} {lineno:>width$} {pipe} {content}",
+            m.alias,
             lineno = m.lineno,
             content = m.original_content,
             width = max_line_len
@@ -368,34 +367,25 @@ fn write_virtual_buffer(
 
     writeln!(file)?;
     writeln!(file, "# --- File Aliases ---")?;
-    for f in files {
+    for (_, f) in files {
         writeln!(file, "# {:>3} = {}", f.alias, f.full_path)?;
     }
     Ok(())
 }
 
-fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
+fn apply_changes(new_text: &str, files: &BTreeMap<String, FileInfo>) -> Result<()> {
     let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s?(.*)$")?;
     let all_files_count = files.len();
     let mut all_lines_count = 0;
 
-    // Build alias -> file index map
-    let alias_to_idx: BTreeMap<&str, usize> = files
-        .iter()
-        .enumerate()
-        .map(|(idx, f)| (f.alias.as_str(), idx))
-        .collect();
-
-    // Track changes: (file_idx, lineno) -> Option<new_content>
-    // None means delete the line
-    let mut files_to_update: HashMap<usize, HashMap<usize, Option<String>>> = HashMap::new();
+    // Track changes: alias -> lineno -> Option<new_content>
+    let mut files_to_update: HashMap<&str, HashMap<usize, Option<String>>> = HashMap::new();
 
     for line in new_text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
             continue;
         }
 
-        // Check for joined lines (multiple pipe characters)
         let pipe_count = line.chars().filter(|&c| c == '▓' || c == '░').count();
         if pipe_count > 1 {
             error!("Detected concatenation, skipping all joined lines:");
@@ -409,8 +399,8 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
             let lineno: usize = cap.get(2).unwrap().as_str().parse()?;
             let new_content = cap.get(3).unwrap().as_str();
 
-            if let Some(&file_idx) = alias_to_idx.get(alias) {
-                let file = &files[file_idx];
+            // Directly look up the file by its alias in the `files` BTreeMap.
+            if let Some(file) = files.get(alias) {
                 let original_lines: Vec<&str> = file.original_content.lines().collect();
 
                 if let Some(&original_line) = original_lines.get(lineno - 1) {
@@ -429,8 +419,9 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
                     };
 
                     if let Some(content) = change {
+                        // Use the alias itself as the key for the outer map.
                         files_to_update
-                            .entry(file_idx)
+                            .entry(alias)
                             .or_default()
                             .insert(lineno, content);
                     }
