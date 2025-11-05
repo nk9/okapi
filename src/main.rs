@@ -337,9 +337,9 @@ fn write_virtual_buffer(
     writeln!(file, "# --- Begin editable lines ---")?;
     writeln!(file)?;
 
-    let max_line_len = match_lines
+    let max_line_w = match_lines
         .iter()
-        .map(|m| m.lineno.to_string().len())
+        .map(|m| (m.lineno as f64).log10().ceil() as usize)
         .max()
         .unwrap_or(1);
 
@@ -362,7 +362,7 @@ fn write_virtual_buffer(
             m.alias,
             lineno = m.lineno,
             content = m.original_content,
-            width = max_line_len
+            width = max_line_w
         )?;
     }
 

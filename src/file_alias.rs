@@ -1,8 +1,7 @@
 use std::fmt;
 
 /// A unique alias identifier for a file (e.g., "A", "AB", "XYZ")
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileAlias {
     /// The character string representation (stored as bytes for Copy)
     /// Max 3 bytes for "ZZZ", so we use a fixed array
@@ -28,6 +27,7 @@ impl FileAlias {
         }
     }
 
+    /// Create a new FileAlias from a string
     pub fn from_str(s: impl AsRef<str>) -> Self {
         let s = s.as_ref();
         let len = s.len().min(3);
@@ -54,6 +54,22 @@ impl FileAlias {
 
 impl fmt::Display for FileAlias {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
+        // Use the string formatting to respect width, alignment, etc.
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+impl PartialOrd for FileAlias {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FileAlias {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare by length first (A < AA < AAA), then lexicographically
+        self.len
+            .cmp(&other.len)
+            .then_with(|| self.bytes[..self.len as usize].cmp(&other.bytes[..other.len as usize]))
     }
 }
