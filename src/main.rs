@@ -5,7 +5,7 @@ use clap::Parser;
 use itertools::iproduct;
 use log::{debug, error, warn};
 use regex::Regex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::Write;
 use std::process::Command;
@@ -215,8 +215,8 @@ fn main() -> Result<()> {
             let alias = match alias_iter.next() {
                 Some(a) => a,
                 None => {
-                    eprintln!(
-                        "Warning: Too many files (there are only A..ZZZ). Stopping at file {}",
+                    error!(
+                        "Too many files (there are only A..ZZZ). Stopping at file {}",
                         path
                     );
                     break;
@@ -388,7 +388,7 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
 
     // Track changes: (file_idx, lineno) -> Option<new_content>
     // None means delete the line
-    let mut changes: BTreeMap<(usize, usize), Option<String>> = BTreeMap::new();
+    let mut files_to_update: HashMap<usize, HashMap<usize, Option<String>>> = HashMap::new();
 
     for line in new_text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -411,42 +411,37 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
 
             if let Some(&file_idx) = alias_to_idx.get(alias) {
                 let file = &files[file_idx];
-
-                // Get the original line from the file
                 let original_lines: Vec<&str> = file.original_content.lines().collect();
 
                 if let Some(&original_line) = original_lines.get(lineno - 1) {
-                    // Check if line should be deleted (empty after pipe)
-                    if new_content.trim().is_empty() {
+                    let change = if new_content.trim().is_empty() {
                         debug!("Line deletion detected at {}:{}", file.path, lineno);
-                        changes.insert((file_idx, lineno), None);
+                        Some(None) // Represents a deletion
                     } else if original_line != new_content {
-                        // Only track if content changed
                         debug!("Change detected at {}:{}", file.path, lineno);
                         debug!("  Original: {:?}", original_line);
                         debug!("  New:      {:?}", new_content);
-                        changes.insert((file_idx, lineno), Some(new_content.to_string()));
+                        Some(Some(new_content.to_string())) // Represents a content change
                     } else {
                         debug!("No change at {}:{}", file.path, lineno);
                         debug!("  Both are: {:?}", original_line);
+                        None // No change to record
+                    };
+
+                    if let Some(content) = change {
+                        files_to_update
+                            .entry(file_idx)
+                            .or_default()
+                            .insert(lineno, content);
                     }
                 }
             }
         }
     }
 
-    if changes.is_empty() {
+    if files_to_update.is_empty() {
         println!("No actual changes detected.");
         return Ok(());
-    }
-
-    // Group changes by file
-    let mut files_to_update: BTreeMap<usize, Vec<(usize, Option<String>)>> = BTreeMap::new();
-    for ((file_idx, lineno), content) in changes {
-        files_to_update
-            .entry(file_idx)
-            .or_default()
-            .push((lineno, content));
     }
 
     // Apply changes to each file
@@ -479,14 +474,10 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
             .map(|s| s.to_string())
             .collect();
 
-        // Convert changes to a HashMap for efficient lookup.
-        let mut changes: std::collections::HashMap<usize, Option<String>> =
-            file_changes.into_iter().collect();
-
         let mut current_lineno = 0;
         lines.retain_mut(|line| {
             current_lineno += 1;
-            if let Some(change) = changes.remove(&current_lineno) {
+            if let Some(change) = file_changes.remove(&current_lineno) {
                 line_change_count += 1;
                 match change {
                     Some(new_content) => {
@@ -502,7 +493,7 @@ fn apply_changes(new_text: &str, files: &[FileInfo]) -> Result<()> {
         });
 
         // Any remaining changes are for line numbers outside the original file's range.
-        for (lineno, _) in changes {
+        for (lineno, _) in file_changes {
             warn!("line {lineno} out of range for {}", file.path);
         }
 
