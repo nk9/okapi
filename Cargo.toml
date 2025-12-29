@@ -3,9 +3,11 @@ name = "okapi"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Find many lines by regex and edit them all at once."
+description = "Find lines across files by regex and edit them all at once with your $EDITOR"
 repository = "https://github.com/nk9/okapi"
 readme = "README.md"
+categories = ["command-line-utilities"]
+keywords = ["batch", "edit", "lines", "regex"]
 
 [dependencies]
 anyhow = "1.0.100"
