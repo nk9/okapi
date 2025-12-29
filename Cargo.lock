@@ -187,21 +187,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
-name = "fixall"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "camino",
- "camino-tempfile",
- "clap",
- "env_logger",
- "itertools",
- "log",
- "range-parser",
- "regex",
-]
-
-[[package]]
 name = "getrandom"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -281,6 +266,21 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+
+[[package]]
+name = "okapi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "camino-tempfile",
+ "clap",
+ "env_logger",
+ "itertools",
+ "log",
+ "range-parser",
+ "regex",
+]
 
 [[package]]
 name = "once_cell"
