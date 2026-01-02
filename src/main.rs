@@ -40,8 +40,8 @@ struct Args {
     paths: Vec<Utf8PathBuf>,
 
     /// Editor command (default: "subl --wait")
-    #[arg(short = 'd', long, default_value = "subl --wait")]
-    editor: String,
+    #[arg(short = 'd', long)]
+    editor: Option<String>,
 
     // Only search files metching type. Passed directly to ripgrep's --type argument.
     #[arg(short, long = "type")]
@@ -295,16 +295,20 @@ fn main() -> Result<()> {
     // Keep original text for change detection
     let original = fs::read_to_string(&tmp)?;
 
-    // Launch editor (e.g. subl --wait <file>)
-    let mut parts = args.editor.split_whitespace();
+    // Launch editor
+    let editor_cmd = args.editor
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| "vim".to_string());
+
+    let mut parts = editor_cmd.split_whitespace();
     let cmd = parts.next().context("empty editor command")?;
     let args_vec: Vec<_> = parts.chain(std::iter::once(tmp.as_ref())).collect();
 
     Command::new(cmd)
         .args(&args_vec)
         .status()
-        .context("launching editor")?;
-
+        .context(format!("launching editor: {}", editor_cmd))?;
+    
     // If file content changed, apply edits
     let new_text = fs::read_to_string(&tmp)?;
     if new_text == original {
