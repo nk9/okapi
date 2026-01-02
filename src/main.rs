@@ -47,8 +47,8 @@ struct Args {
     #[arg(short, long = "type")]
     r#type: Option<String>,
 
-    /// Maximum number of total matches to include. Hard max at 18,278
-    #[arg(short, long, default_value = "150")]
+    /// Maximum number of total matches to include. Hard max at 18,278 due to 3-letter aliases.
+    #[arg(short, long, default_value = "1000")]
     max_count: usize,
 
     /// Exclude pattern - matches that also match this regex will be filtered out
@@ -308,7 +308,7 @@ fn main() -> Result<()> {
         .args(&args_vec)
         .status()
         .context(format!("launching editor: {}", editor_cmd))?;
-    
+
     // If file content changed, apply edits
     let new_text = fs::read_to_string(&tmp)?;
     if new_text == original {
