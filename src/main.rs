@@ -43,10 +43,6 @@ struct Args {
     #[arg(short = 'd', long)]
     editor: Option<String>,
 
-    // Only search files metching type. Passed directly to ripgrep's --type argument.
-    #[arg(short, long = "type")]
-    r#type: Option<String>,
-
     /// Maximum number of total matches to include. Hard max at 18,278 due to 3-letter aliases.
     #[arg(short, long, default_value = "1000")]
     max_count: usize,
@@ -66,6 +62,10 @@ struct Args {
     /// Column range filter (e.g., "..35", "3-20", "15.."). Default max col is 200.
     #[arg(short, long)]
     columns: Option<String>,
+
+    /// Arguments passed directly to ripgrep
+    #[arg(last = true)]
+    extra_args: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -126,8 +126,9 @@ fn main() -> Result<()> {
         cmd.arg("--ignore-case");
     }
 
-    if let Some(typ) = args.r#type {
-        cmd.arg("--type").arg(typ);
+    // Pass through the unknown arguments
+    if !args.extra_args.is_empty() {
+        cmd.args(&args.extra_args);
     }
 
     let output = cmd
