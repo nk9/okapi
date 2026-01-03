@@ -288,7 +288,7 @@ fn main() -> Result<()> {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let tmp: Utf8PathBuf = tmp_dir
         .path()
-        .join(format!("fixall-edit-{}.fixall.txt", ts))
+        .join(format!("edit-{}.okapi.txt", ts))
         .try_into()?;
 
     write_virtual_buffer(&tmp, &args.pattern, &match_lines, &files)?;
@@ -344,7 +344,7 @@ fn write_virtual_buffer(
 ) -> Result<()> {
     let mut file = fs::File::create(tmp)?;
 
-    writeln!(file, "# fixall – bulk regex editing buffer")?;
+    writeln!(file, "# okapi – bulk regex editing buffer")?;
     writeln!(file, "# Regex: {regex}")?;
     writeln!(file, "# Save and close to apply changes.")?;
     writeln!(file, "# Lines starting with '#' are ignored.")?;
