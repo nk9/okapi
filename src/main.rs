@@ -107,7 +107,7 @@ fn main() -> Result<()> {
 
     // Run ripgrep to get matches
     let mut cmd = Command::new("rg");
-    cmd.arg("-nP")
+    cmd.arg("-n")
         .arg("--ignore-files")
         .arg("--column")
         .arg("--no-heading")
