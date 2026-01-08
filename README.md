@@ -45,7 +45,7 @@ okapi "(Suffragette ?){2}" -c "..15"
 Find all lines which contain the pattern, but _exclude_ lines that match a secondary pattern:
 
 ```bash
-okapi "Hamilton" -e "Saskia|Alexander"
+okapi "(Saskia)? Hamilton" -e "Alexander"
 ```
 
 Use a case-insensitive search to find the pattern within the columns:
