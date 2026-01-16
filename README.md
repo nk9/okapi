@@ -16,6 +16,9 @@ Sometimes you know how to identify lines which need editing, but crafting a repl
 
 Don't worry: if you changed a file in the meantime, okapi will print a warning and skip those edits. Each line is tracked with enough metadata to ensure it is written back to the correct file and line.
 
+
+[![asciicast](https://asciinema.org/a/Jzpw63nXDnMr0pF7.svg)](https://asciinema.org/a/Jzpw63nXDnMr0pF7)
+
 ---
 
 ## Usage
@@ -65,12 +68,14 @@ okapi "(?<=The)\sGym" -- -P
 
 ### Editing lines
 
-// TODO
+Edit the text just as you would any other text file. However, Okapi is line-based, so be sure not to add any linebreaks.
+
+Once you're done, just save and quit. The files will be modified to match the lines in the temporary buffer.
 
 ## Requirements
 
 * **ripgrep** (`rg`) must be installed and available in `PATH`
-* An editor that can block until exit
+* You must have an editor which can block until exit
 
 ---
 
@@ -78,7 +83,7 @@ okapi "(?<=The)\sGym" -- -P
 
 * **Okapi** edits real files. Use version control.
 * If the editor exits without saving (`:q!`), no changes are applied.
-* Large match sets are intentionally capped. Presently, the number of matches is limited to 18,278, due to 3-character alphabetic aliases.
+* Large match sets are intentionally capped at 1,000, which can be adjusted with `-m`. Presently, the number of matches is limited to 18,278, due to 3-character alphabetic aliases.
 
 ---
 
