@@ -346,11 +346,13 @@ fn write_virtual_buffer(
 
     writeln!(file, "# okapi – bulk regex editing buffer")?;
     writeln!(file, "# Regex: {regex}")?;
-    writeln!(file, "# Save and close to apply changes.")?;
-    writeln!(file, "# Lines starting with '#' are ignored.")?;
+    writeln!(file, "# - Save and close to apply changes.")?;
+    writeln!(file, "# - Unchanged lines and those starting with '#' are ignored.")?;
     writeln!(
         file,
-        "# Remove a line from the source file by deleting everything after the shade block (▓)."
+        "{}\n{}",
+        "# - Remove a line from the source file by deleting everything",
+        "#   after the shade block (▓)."
     )?;
     writeln!(file, "#")?;
     writeln!(file, "# --- Begin editable lines ---")?;
