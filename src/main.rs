@@ -39,7 +39,7 @@ struct Args {
     #[arg(value_name = "PATHS", num_args = 0..)]
     paths: Vec<Utf8PathBuf>,
 
-    /// Editor command (default: "subl --wait")
+    /// Editor command (default: "vim")
     #[arg(short = 'd', long)]
     editor: Option<String>,
 
