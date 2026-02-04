@@ -1,6 +1,6 @@
 <img src="assets/logo.svg" width="128" alt="Patch the Okapi helps you find and fix lines.">
 
-# Okapi: Find. Fix. Finished.
+# Okapi: Find it. Fix it. Finished.
 
 Sometimes you know how to identify lines which need editing, but crafting a replacement string is either hard or impossible. Enter **okapi**, a batch editor with a difference. Match lines from across thousands of files by regex, then edit them all in one temporary file with your `$EDITOR`. Then just save and close, and **okapi** does the rest.
 
