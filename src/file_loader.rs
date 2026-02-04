@@ -70,3 +70,44 @@ fn build_match_lines(reqs: Vec<(Utf8PathBuf, usize)>, files: &BTreeMap<FileAlias
         Some(MatchLine { alias: *alias, lineno, original_content: line_content.to_string() })
     }).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use camino_tempfile::tempdir;
+    use std::fs;
+
+    #[test]
+    fn test_load_from_list() {
+        let dir = tempdir().unwrap();
+        let wd: Utf8PathBuf = dir.path().to_path_buf().try_into().unwrap();
+
+        // 1. Create a dummy file to be edited
+        let target_file = wd.join("test.txt");
+        fs::write(&target_file, "line1\nline2\nline3\n").unwrap();
+
+        // 2. Create the okapi list file
+        let list_path = wd.join("list.txt");
+        fs::write(&list_path, "test.txt:2").unwrap();
+
+        // 3. Setup Args using parse_from (requires clap::Parser in scope)
+        // Note: dummy_pat is required because it's the positional 'pattern' arg
+        let args = Args::parse_from(&[
+            "okapi",
+            "--working-directory", wd.as_str(),
+            "--file", list_path.as_str()
+        ]);
+
+        let (matches, files, label) = load_from_list(&list_path, &args).unwrap();
+
+        // Assertions
+        assert_eq!(matches.len(), 1, "Should have exactly one match");
+        assert_eq!(matches[0].original_content, "line2");
+        assert_eq!(files.len(), 1, "Should have tracked exactly one file");
+        assert!(label.contains("list.txt"));
+
+        let alias = matches[0].alias;
+        assert_eq!(files.get(&alias).unwrap().path, "test.txt");
+    }
+}

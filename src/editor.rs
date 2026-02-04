@@ -162,3 +162,36 @@ fn print_summary(lines_chg: usize, files_chg: usize, lines_total: usize, files_t
     println!("\n  Changed: {:>w$} line(s), {:>w$} file(s)", lines_chg, files_chg);
     println!("Unchanged: {:>w$} line(s), {:>w$} file(s)", lines_total - lines_chg, files_total - files_chg);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_buffer_line_regex() {
+        let re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s?(.*)$").unwrap();
+
+        // Basic match
+        let cap = re.captures("  A  10 ░ hello world").unwrap();
+        assert_eq!(&cap[1], "A");
+        assert_eq!(&cap[2], "10");
+        assert_eq!(&cap[3], "hello world");
+
+        // Heavy pipe match
+        let cap_heavy = re.captures("ZZZ 999 ▓ content").unwrap();
+        assert_eq!(&cap_heavy[1], "ZZZ");
+        assert_eq!(&cap_heavy[2], "999");
+        assert_eq!(&cap_heavy[3], "content");
+
+        // Empty content (deletion case)
+        let cap_del = re.captures("  B  5 ░ ").unwrap();
+        assert_eq!(&cap_del[3], "");
+    }
+
+    #[test]
+    fn test_concatenation_detection() {
+        let line = "A 1 ░ content ▓ B 2 ░ content";
+        let pipe_count = line.chars().filter(|&c| c == '▓' || c == '░').count();
+        assert!(pipe_count > 1, "Should detect user error: multiple pipes on one line");
+    }
+}

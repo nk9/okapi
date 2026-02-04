@@ -11,7 +11,7 @@ use file_alias::FileAlias;
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Args {
-    /// PCRE-compatible regex pattern (passed to ripgrep)
+    /// Rust regex pattern (passed to ripgrep)
     #[arg(required_unless_present = "file")]
     pub pattern: Option<String>,
 
@@ -90,4 +90,26 @@ pub fn alias_iter() -> impl Iterator<Item = FileAlias> {
         .map(|(c1, c2, c3)| FileAlias::new(&[c1, c2, c3]));
 
     singles.chain(doubles).chain(triples)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_alias_sequence() {
+        let mut it = alias_iter();
+        assert_eq!(it.next().unwrap().to_string(), "A");
+
+        // Skip remaining 25 single letters
+        for _ in 0..25 { it.next(); }
+
+        // Should start doubles
+        assert_eq!(it.next().unwrap().to_string(), "AA");
+        assert_eq!(it.next().unwrap().to_string(), "AB");
+
+        // Should eventually hit triples
+        let mut triples = alias_iter().skip(26 + (26 * 26));
+        assert_eq!(triples.next().unwrap().to_string(), "AAA");
+    }
 }

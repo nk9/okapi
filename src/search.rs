@@ -105,3 +105,31 @@ fn finalize_search_data(matches: Vec<(Utf8PathBuf, usize, String)>, args: &Args)
 
     Ok((files, match_lines))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_column_range_expansion() {
+        // Standard range
+        assert_eq!(parse_column_range("1..3").unwrap(), vec![1, 2, 3]);
+
+        // Shorthand start
+        let start = parse_column_range("..3").unwrap();
+        assert_eq!(start, vec![1, 2, 3]);
+
+        // Shorthand end
+        let end = parse_column_range("198..").unwrap();
+        assert_eq!(end, vec![198, 199, 200]);
+
+        // Multiple ranges
+        let multi = parse_column_range("1..2;5..6").unwrap();
+        assert_eq!(multi, vec![1, 2, 5, 6]);
+    }
+
+    #[test]
+    fn test_invalid_range() {
+        assert!(parse_column_range("abc").is_err());
+    }
+}
