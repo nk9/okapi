@@ -9,6 +9,10 @@ readme = "README.md"
 categories = ["command-line-utilities"]
 keywords = ["batch", "edit", "lines", "regex"]
 
+[[bin]]
+name = "okapi"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0.100"
 camino = "1.2.1"

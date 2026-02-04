@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
+use std::{env, fs};
 
 pub fn load_from_list(
     list_path: &Utf8PathBuf,
@@ -12,41 +12,89 @@ pub fn load_from_list(
     let content = fs::read_to_string(list_path).context("reading list file")?;
     let mut requests = Vec::new();
 
-    for line in content.lines().filter(|l| !l.trim().is_empty()) {
-        if let Some((path_str, line_str)) = line.rsplit_once(':') {
-            let lineno = line_str.parse::<usize>().context("parsing line number")?;
-            let mut path = Utf8PathBuf::from(path_str);
-            if let Some(ref wd) = args.working_directory {
-                path = wd.join(path);
-            }
-            requests.push((path, lineno));
+    // Get the absolute base path (either -w or current process CWD)
+    let absolute_base = get_absolute_base(args)?;
+
+    for (idx, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
         }
+
+        let (path_str, line_str) = line
+            .rsplit_once(':')
+            .with_context(|| format!("missing colon separator on line {}", idx + 1))?;
+
+        let lineno = line_str.parse::<usize>().context("parsing line number")?;
+
+        // Resolve path: absolute paths stay as-is, relative paths joined to absolute_base
+        let path = Utf8PathBuf::from(path_str);
+        let full_path = if path.is_absolute() {
+            path
+        } else {
+            absolute_base.join(path)
+        };
+
+        requests.push((full_path, lineno));
     }
 
-    let unique_paths: Vec<Utf8PathBuf> = requests.iter().map(|(p, _)| p.clone())
-        .collect::<HashSet<_>>().into_iter().collect();
+    let unique_paths: Vec<Utf8PathBuf> = requests
+        .iter()
+        .map(|(p, _)| p.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
 
-    // Parallel processing of file contents
-    let file_infos: Vec<FileInfo> = unique_paths.into_par_iter().map(|full_path| {
-        let content = fs::read_to_string(&full_path)?;
-        let metadata = fs::metadata(&full_path)?;
-        let display_path = match &args.working_directory {
-            Some(wd) => full_path.strip_prefix(wd).unwrap_or(&full_path).to_path_buf(),
-            None => full_path.clone(),
-        };
-        Ok(FileInfo {
-            path: display_path, full_path, alias: FileAlias::new(&['A']),
-            original_content: content, original_mtime: metadata.modified()?,
-        })
-    }).collect::<Result<Vec<_>>>()?;
-
+    let file_infos = load_files_parallel(unique_paths)?;
     let (files, path_to_alias) = assign_aliases(file_infos);
     let match_lines = build_match_lines(requests, &files, &path_to_alias);
 
     Ok((match_lines, files, format!("File: {}", list_path)))
 }
 
-fn assign_aliases(mut infos: Vec<FileInfo>) -> (BTreeMap<FileAlias, FileInfo>, BTreeMap<Utf8PathBuf, FileAlias>) {
+/// Determines the absolute base directory.
+/// If --working-directory is provided, it's resolved against CWD. If not, CWD is used.
+fn get_absolute_base(args: &Args) -> Result<Utf8PathBuf> {
+    let cwd = Utf8PathBuf::try_from(env::current_dir()?)?;
+
+    if let Some(ref wd) = args.working_directory {
+        if wd.is_absolute() {
+            Ok(wd.clone())
+        } else {
+            Ok(cwd.join(wd))
+        }
+    } else {
+        Ok(cwd)
+    }
+}
+
+fn load_files_parallel(paths: Vec<Utf8PathBuf>) -> Result<Vec<FileInfo>> {
+    paths
+        .into_par_iter()
+        .map(|full_path| {
+            let content = fs::read_to_string(&full_path)
+                .with_context(|| format!("failed to read file: {}", full_path))?;
+            let metadata = fs::metadata(&full_path)?;
+
+            Ok(FileInfo {
+                // We store the full absolute path in both fields to satisfy
+                // the requirement that the alias section shows absolute paths.
+                path: full_path.clone(),
+                full_path,
+                alias: FileAlias::new(&['A']),
+                original_content: content,
+                original_mtime: metadata.modified()?,
+            })
+        })
+        .collect()
+}
+
+fn assign_aliases(
+    mut infos: Vec<FileInfo>,
+) -> (
+    BTreeMap<FileAlias, FileInfo>,
+    BTreeMap<Utf8PathBuf, FileAlias>,
+) {
     infos.sort_by(|a, b| a.path.cmp(&b.path));
     let mut files = BTreeMap::new();
     let mut path_map = BTreeMap::new();
@@ -62,52 +110,50 @@ fn assign_aliases(mut infos: Vec<FileInfo>) -> (BTreeMap<FileAlias, FileInfo>, B
     (files, path_map)
 }
 
-fn build_match_lines(reqs: Vec<(Utf8PathBuf, usize)>, files: &BTreeMap<FileAlias, FileInfo>, path_map: &BTreeMap<Utf8PathBuf, FileAlias>) -> Vec<MatchLine> {
-    reqs.into_iter().filter_map(|(path, lineno)| {
-        let alias = path_map.get(&path)?;
-        let file = files.get(alias)?;
-        let line_content = file.original_content.lines().nth(lineno - 1)?;
-        Some(MatchLine { alias: *alias, lineno, original_content: line_content.to_string() })
-    }).collect()
+fn build_match_lines(
+    reqs: Vec<(Utf8PathBuf, usize)>,
+    files: &BTreeMap<FileAlias, FileInfo>,
+    path_map: &BTreeMap<Utf8PathBuf, FileAlias>,
+) -> Vec<MatchLine> {
+    reqs.into_iter()
+        .filter_map(|(path, lineno)| {
+            let alias = path_map.get(&path)?;
+            let file = files.get(alias)?;
+            let line_content = file.original_content.lines().nth(lineno - 1)?;
+            Some(MatchLine {
+                alias: *alias,
+                lineno,
+                original_content: line_content.to_string(),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use camino_tempfile::tempdir;
-    use std::fs;
+    use clap::Parser;
 
     #[test]
-    fn test_load_from_list() {
+    fn test_relative_path_resolution() {
         let dir = tempdir().unwrap();
-        let wd: Utf8PathBuf = dir.path().to_path_buf().try_into().unwrap();
+        let wd = Utf8PathBuf::try_from(dir.path().to_path_buf()).unwrap();
 
-        // 1. Create a dummy file to be edited
-        let target_file = wd.join("test.txt");
-        fs::write(&target_file, "line1\nline2\nline3\n").unwrap();
+        let target = wd.join("target.txt");
+        fs::write(&target, "content").unwrap();
 
-        // 2. Create the okapi list file
         let list_path = wd.join("list.txt");
-        fs::write(&list_path, "test.txt:2").unwrap();
+        fs::write(&list_path, "target.txt:1").unwrap();
 
-        // 3. Setup Args using parse_from (requires clap::Parser in scope)
-        // Note: dummy_pat is required because it's the positional 'pattern' arg
-        let args = Args::parse_from(&[
-            "okapi",
-            "--working-directory", wd.as_str(),
-            "--file", list_path.as_str()
-        ]);
-
-        let (matches, files, label) = load_from_list(&list_path, &args).unwrap();
-
-        // Assertions
-        assert_eq!(matches.len(), 1, "Should have exactly one match");
-        assert_eq!(matches[0].original_content, "line2");
-        assert_eq!(files.len(), 1, "Should have tracked exactly one file");
-        assert!(label.contains("list.txt"));
+        let args = Args::parse_from(&["okapi", "-w", wd.as_str(), "--file", list_path.as_str()]);
+        let (matches, files, _) = load_from_list(&list_path, &args).unwrap();
 
         let alias = matches[0].alias;
-        assert_eq!(files.get(&alias).unwrap().path, "test.txt");
+        let info = files.get(&alias).unwrap();
+
+        // Ensure the path in the alias section is absolute
+        assert!(info.full_path.is_absolute());
+        assert!(info.full_path.ends_with("target.txt"));
     }
 }

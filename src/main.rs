@@ -1,15 +1,21 @@
+mod editor;
 mod file_alias;
 mod file_loader;
 mod search;
-mod editor;
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use file_alias::FileAlias;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
+// Create a group that requires exactly one of 'pattern' or 'file'
+#[command(group(
+    ArgGroup::new("input")
+        .required(true)
+        .args(["pattern", "file"]),
+))]
 pub struct Args {
     /// Rust regex pattern (passed to ripgrep)
     #[arg(required_unless_present = "file")]
@@ -102,7 +108,9 @@ mod tests {
         assert_eq!(it.next().unwrap().to_string(), "A");
 
         // Skip remaining 25 single letters
-        for _ in 0..25 { it.next(); }
+        for _ in 0..25 {
+            it.next();
+        }
 
         // Should start doubles
         assert_eq!(it.next().unwrap().to_string(), "AA");
