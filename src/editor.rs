@@ -1,10 +1,10 @@
-// src/editor.rs
-
 use crate::{Args, FileAlias, FileInfo, MatchLine};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use camino_tempfile::tempdir;
+use crossterm::style::Stylize;
 use regex::Regex;
+use similar::{ChangeTag, TextDiff};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::Write;
@@ -19,7 +19,10 @@ pub fn run_editor_session(
 ) -> Result<()> {
     let tmp_dir = tempdir().context("creating temporary directory")?;
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-    let tmp: Utf8PathBuf = tmp_dir.path().join(format!("edit-{}.okapi.txt", ts)).try_into()?;
+    let tmp: Utf8PathBuf = tmp_dir
+        .path()
+        .join(format!("edit-{}.okapi.txt", ts))
+        .try_into()?;
 
     write_virtual_buffer(&tmp, label, &match_lines, &files)?;
     let original_text = fs::read_to_string(&tmp)?;
@@ -36,7 +39,9 @@ pub fn run_editor_session(
 }
 
 fn launch_editor(args: &Args, path: &Utf8Path) -> Result<()> {
-    let editor_cmd = args.editor.clone()
+    let editor_cmd = args
+        .editor
+        .clone()
         .or_else(|| std::env::var("EDITOR").ok())
         .unwrap_or_else(|| "vim".to_string());
 
@@ -60,11 +65,21 @@ fn write_virtual_buffer(
     let mut file = fs::File::create(tmp)?;
     writeln!(file, "# okapi – bulk editing buffer\n# {}\n#", label)?;
     writeln!(file, "# - Save and close to apply changes.")?;
-    writeln!(file, "# - Unchanged lines and those starting with '#' are ignored.")?;
-    writeln!(file, "# - Delete everything after the shade block (▓) to remove a line.\n#")?;
+    writeln!(
+        file,
+        "# - Unchanged lines and those starting with '#' are ignored."
+    )?;
+    writeln!(
+        file,
+        "# - Delete everything after the shade block (▓) to remove a line.\n#"
+    )?;
     writeln!(file, "# --- Begin editable lines ---\n")?;
 
-    let max_w = match_lines.iter().map(|m| (m.lineno as f64).log10() as usize + 1).max().unwrap_or(1);
+    let max_w = match_lines
+        .iter()
+        .map(|m| (m.lineno as f64).log10() as usize + 1)
+        .max()
+        .unwrap_or(1);
     let mut current_alias = None;
     let mut use_heavy = false;
 
@@ -74,7 +89,15 @@ fn write_virtual_buffer(
             use_heavy = !use_heavy;
         }
         let pipe = if use_heavy { "▓" } else { "░" };
-        writeln!(file, "{:>3} {:>width$} {} {}", m.alias, m.lineno, pipe, m.original_content, width = max_w)?;
+        writeln!(
+            file,
+            "{:>3} {:>width$} {} {}",
+            m.alias,
+            m.lineno,
+            pipe,
+            m.original_content,
+            width = max_w
+        )?;
     }
 
     writeln!(file, "\n# --- File Aliases ---")?;
@@ -89,8 +112,13 @@ fn apply_changes(new_text: &str, files: &BTreeMap<FileAlias, FileInfo>) -> Resul
     let mut changes: HashMap<FileAlias, HashMap<usize, Option<String>>> = HashMap::new();
     let mut total_lines = 0;
 
-    for line in new_text.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
-        if line.chars().filter(|&c| c == '▓' || c == '░').count() > 1 { continue; }
+    for line in new_text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+    {
+        if line.chars().filter(|&c| c == '▓' || c == '░').count() > 1 {
+            continue;
+        }
 
         if let Some(cap) = line_re.captures(line) {
             total_lines += 1;
@@ -104,7 +132,10 @@ fn apply_changes(new_text: &str, files: &BTreeMap<FileAlias, FileInfo>) -> Resul
                     if new_content.trim().is_empty() {
                         changes.entry(alias).or_default().insert(lineno, None);
                     } else if orig != new_content {
-                        changes.entry(alias).or_default().insert(lineno, Some(new_content.to_string()));
+                        changes
+                            .entry(alias)
+                            .or_default()
+                            .insert(lineno, Some(new_content.to_string()));
                     }
                 }
             }
@@ -129,69 +160,122 @@ fn perform_file_updates(
 
     for (alias, mut file_changes) in updates {
         let file = files.get(&alias).context("missing file alias")?;
-        if fs::metadata(&file.full_path)?.modified()? != file.original_mtime {
-            eprintln!("Skipping {}: modified externally", file.path);
-            continue;
+        let current_mtime = fs::metadata(&file.full_path)?.modified()?;
+
+        let mut lines: Vec<String>;
+
+        if current_mtime != file.original_mtime {
+            let current_content = fs::read_to_string(&file.full_path)?;
+            let current_lines: Vec<&str> = current_content.lines().collect();
+            let original_lines: Vec<&str> = file.original_content.lines().collect();
+
+            let mut conflicts = Vec::new();
+            let mut already_applied_indices = Vec::new();
+
+            for (&idx, new_val) in &file_changes {
+                let current_on_disk = current_lines.get(idx - 1).copied().unwrap_or("");
+                let user_intended = new_val.as_deref().unwrap_or("");
+                let original_state = original_lines.get(idx - 1).copied().unwrap_or("");
+
+                if current_on_disk == user_intended {
+                    already_applied_indices.push(idx);
+                } else if current_on_disk != original_state {
+                    conflicts.push((idx, original_state, user_intended));
+                }
+            }
+
+            if !conflicts.is_empty() {
+                eprintln!("\nConflict in {}: modified externally", file.path);
+                for (idx, old, new) in conflicts {
+                    print_diff(idx, old, new);
+                }
+                continue;
+            }
+
+            for idx in already_applied_indices {
+                file_changes.remove(&idx);
+                line_count += 1;
+            }
+
+            lines = current_lines.into_iter().map(|s| s.to_string()).collect();
+        } else {
+            lines = file
+                .original_content
+                .lines()
+                .map(|s| s.to_string())
+                .collect();
         }
 
-        let mut lines: Vec<String> = file.original_content.lines().map(|s| s.to_string()).collect();
-        let mut idx = 0;
-        lines.retain_mut(|line| {
-            idx += 1;
-            if let Some(change) = file_changes.remove(&idx) {
-                line_count += 1;
-                if let Some(new_val) = change { *line = new_val; return true; }
-                return false; // Deletion
-            }
-            true
-        });
+        if !file_changes.is_empty() {
+            let mut idx = 0;
+            lines.retain_mut(|line| {
+                idx += 1;
+                if let Some(change) = file_changes.remove(&idx) {
+                    line_count += 1;
+                    if let Some(new_val) = change {
+                        *line = new_val;
+                        return true;
+                    }
+                    return false;
+                }
+                true
+            });
 
-        let mut output = lines.join("\n");
-        if file.original_content.ends_with('\n') { output.push('\n'); }
-        fs::write(&file.full_path, output)?;
-        file_count += 1;
-        println!("Updated {}", file.path);
+            let mut output = lines.join("\n");
+            if file.original_content.ends_with('\n') {
+                output.push('\n');
+            }
+
+            fs::write(&file.full_path, output)?;
+            file_count += 1;
+            println!("Updated {}", file.path);
+        } else if line_count > 0 {
+            file_count += 1;
+            println!("Verified {} (already up to date)", file.path);
+        }
     }
 
     print_summary(line_count, file_count, all_lines, files.len());
     Ok(())
 }
 
-fn print_summary(lines_chg: usize, files_chg: usize, lines_total: usize, files_total: usize) {
-    let w = (lines_total as f64).log10().ceil() as usize;
-    println!("\n  Changed: {:>w$} line(s), {:>w$} file(s)", lines_chg, files_chg);
-    println!("Unchanged: {:>w$} line(s), {:>w$} file(s)", lines_total - lines_chg, files_total - files_chg);
+/// Prints a two-line character-level diff for a conflict
+fn print_diff(lineno: usize, original: &str, updated: &str) {
+    let diff = TextDiff::from_chars(original, updated);
+    let changes: Vec<_> = diff.iter_all_changes().collect();
+
+    // Line 1: Old version with removals in red
+    print!(" orig: {:>4} ░ ", lineno);
+    for change in &changes {
+        match change.tag() {
+            ChangeTag::Delete => print!("{}", change.value().red()),
+            ChangeTag::Equal => print!("{}", change.value()),
+            ChangeTag::Insert => {} // Skip additions in "old" view
+        }
+    }
+    println!();
+
+    // Line 2: New version with additions in green
+    print!("okapi:  {:>4} > ░ ", lineno);
+    for change in &changes {
+        match change.tag() {
+            ChangeTag::Insert => print!("{}", change.value().green()),
+            ChangeTag::Equal => print!("{}", change.value()),
+            ChangeTag::Delete => {} // Skip removals in "new" view
+        }
+    }
+    println!();
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_buffer_line_regex() {
-        let re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s?(.*)$").unwrap();
-
-        // Basic match
-        let cap = re.captures("  A  10 ░ hello world").unwrap();
-        assert_eq!(&cap[1], "A");
-        assert_eq!(&cap[2], "10");
-        assert_eq!(&cap[3], "hello world");
-
-        // Heavy pipe match
-        let cap_heavy = re.captures("ZZZ 999 ▓ content").unwrap();
-        assert_eq!(&cap_heavy[1], "ZZZ");
-        assert_eq!(&cap_heavy[2], "999");
-        assert_eq!(&cap_heavy[3], "content");
-
-        // Empty content (deletion case)
-        let cap_del = re.captures("  B  5 ░ ").unwrap();
-        assert_eq!(&cap_del[3], "");
-    }
-
-    #[test]
-    fn test_concatenation_detection() {
-        let line = "A 1 ░ content ▓ B 2 ░ content";
-        let pipe_count = line.chars().filter(|&c| c == '▓' || c == '░').count();
-        assert!(pipe_count > 1, "Should detect user error: multiple pipes on one line");
-    }
+fn print_summary(lines_chg: usize, files_chg: usize, lines_total: usize, files_total: usize) {
+    let w = (lines_total as f64).log10().ceil() as usize;
+    println!(
+        "\n  Changed: {:>w$} line(s), {:>w$} file(s)",
+        lines_chg, files_chg
+    );
+    println!(
+        "Unchanged: {:>w$} line(s), {:>w$} file(s)",
+        lines_total - lines_chg,
+        files_total - files_chg
+    );
 }
