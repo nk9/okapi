@@ -8,6 +8,7 @@ repository = "https://github.com/nk9/okapi"
 readme = "README.md"
 categories = ["command-line-utilities"]
 keywords = ["batch", "edit", "lines", "regex"]
+publish = false # don't publish to crates.io
 
 [[bin]]
 name = "okapi"
