@@ -85,7 +85,7 @@ jobs:
       - name: Checkout Tap
         uses: actions/checkout@v4
         with:
-          repository: YOUR_USER/homebrew-okapi
+          repository: nk9/homebrew-okapi
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Download Checksums
