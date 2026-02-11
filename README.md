@@ -25,6 +25,16 @@ tracked with enough metadata to ensure it is written back to the correct file an
 
 ## Usage
 
+### Installation
+
+```bash
+brew install nk9/okapi/okapi
+```
+
+If you don't have Homebrew, you can download the release binary for your platform from the Releases page. I don't
+currently have Windows binaries, but would be happy to accept a PR to add that to the workflow. (I don't use Windows, so
+I'd want to know that the tool works reliably there.)
+
 ### Finding lines
 
 Find all lines in the current directory, recursively, containing "Anatome". Note that `ripgrep` is case sensitive by
@@ -98,6 +108,19 @@ Once you're done, just save and quit. The files will be modified to match the li
   is limited to 18,278, due to 3-character alphabetic aliases.
 
 ---
+
+## Why an okapi?
+
+Well, they're adorable for one! And the stripes lend themselves well to thinking about lines of text. Another name I
+considered was "ok", as in "[oll-korrect](https://en.wiktionary.org/wiki/oll_korrect)", since it's short and that's what
+you're doing: correcting all the things! But `ok` is such a common string, I felt a little conflicted about presuming to
+take it for this silly little utility. And although I couldn't immediately find any other tools with this name, it seems
+impossible that this would be the first one to want to use it. So I thought it was safer (and cuter) to stick with
+**okapi**.
+
+### Does the okapi have a name?
+
+No, but please suggest one!
 
 ## License
 
