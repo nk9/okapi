@@ -70,9 +70,12 @@ fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
 
-    // The two distinct branches
     let (match_lines, files, label) = if let Some(ref list_path) = args.file {
-        file_loader::load_from_list(list_path, &args)?
+        if list_path == "-" {
+            file_loader::load_from_stdin(&args)?
+        } else {
+            file_loader::load_from_list(list_path, &args)?
+        }
     } else {
         search::run_ripgrep_search(&args)?
     };

@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashSet};
+use std::io::{self, Read};
 use std::{env, fs};
 
 pub fn load_from_list(
@@ -10,9 +11,27 @@ pub fn load_from_list(
     args: &Args,
 ) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>, String)> {
     let content = fs::read_to_string(list_path).context("reading list file")?;
-    let mut requests = Vec::new();
+    let label = format!("File: {}", list_path);
+    let (matches, files) = parse_and_load(&content, args)?;
+    Ok((matches, files, label))
+}
 
-    // Get the absolute base path (either -w or current process CWD)
+pub fn load_from_stdin(
+    args: &Args,
+) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>, String)> {
+    let mut buffer = String::new();
+    io::stdin()
+        .read_to_string(&mut buffer)
+        .context("reading from stdin")?;
+    let (matches, files) = parse_and_load(&buffer, args)?;
+    Ok((matches, files, "STDIN".to_string()))
+}
+
+fn parse_and_load(
+    content: &str,
+    args: &Args,
+) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>)> {
+    let mut requests = Vec::new();
     let absolute_base = get_absolute_base(args)?;
 
     for (idx, line) in content.lines().enumerate() {
@@ -27,7 +46,6 @@ pub fn load_from_list(
 
         let lineno = line_str.parse::<usize>().context("parsing line number")?;
 
-        // Resolve path: absolute paths stay as-is, relative paths joined to absolute_base
         let path = Utf8PathBuf::from(path_str);
         let full_path = if path.is_absolute() {
             path
@@ -49,7 +67,7 @@ pub fn load_from_list(
     let (files, path_to_alias) = assign_aliases(file_infos);
     let match_lines = build_match_lines(requests, &files, &path_to_alias);
 
-    Ok((match_lines, files, format!("File: {}", list_path)))
+    Ok((match_lines, files))
 }
 
 /// Determines the absolute base directory.
