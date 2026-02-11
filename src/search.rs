@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use log::debug;
 use regex::Regex;
+use shellexpand;
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::{exit, Command};
@@ -19,11 +20,27 @@ pub fn run_ripgrep_search(
     let mut cmd = Command::new("rg");
     cmd.args(["-n", "--ignore-files", "--column", "--no-heading", pattern]);
 
-    let paths = if let Some(ref wd) = args.working_directory {
-        args.paths.iter().map(|p| wd.join(p)).collect()
-    } else {
-        args.paths.clone()
-    };
+    // 1. Process paths using camino and shellexpand
+    let paths: Vec<Utf8PathBuf> = args
+        .paths
+        .iter()
+        .map(|p| {
+            let expanded = shellexpand::tilde(p.as_str());
+            let expanded_path = Utf8PathBuf::from(expanded.into_owned());
+
+            if let Some(ref wd) = args.working_directory {
+                // wd should also be a Utf8PathBuf
+                if expanded_path.is_absolute() {
+                    expanded_path
+                } else {
+                    wd.join(expanded_path)
+                }
+            } else {
+                expanded_path
+            }
+        })
+        .collect();
+
     cmd.args(&paths);
 
     if args.ignore_case {
@@ -33,21 +50,25 @@ pub fn run_ripgrep_search(
         cmd.args(&args.extra_args);
     }
 
+    // 2. Execute command
     let output = cmd
         .output()
         .context("failed to run ripgrep (is rg installed?)")?;
 
-    // Check if the command failed (exit code != 0)
+    // 3. Handle ripgrep errors
     if !output.status.success() {
+        // Ripgrep exit code 1 means "no matches found".
+        // Any other non-zero code is a real error (invalid regex, etc.)
         if output.status.code() != Some(1) {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("{}", stderr);
+            eprintln!("ripgrep error:\n{}", stderr);
+
+            // Exit the whole program with ripgrep's error code
             exit(output.status.code().unwrap_or(1));
         }
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-
     let matches = parse_rg_output(&stdout, args)?;
     let (files, match_lines) = finalize_search_data(matches, args)?;
 
