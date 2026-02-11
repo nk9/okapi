@@ -90,8 +90,12 @@ Once you're done, just save and quit. The files will be modified to match the li
 ## Notes and safety
 
 * **Okapi** edits real files. Use version control.
-* If the editor exits without saving (`:q!`), no changes are applied.
-* Large match sets are intentionally capped at 1,000, which can be adjusted with `-m`. Presently, the number of matches is limited to 18,278, due to 3-character alphabetic aliases.
+* Any changes saved to the virtual buffer will be persisted on a clean exit.
+* If the editor exits without saving, or if no lines were changed, then the original files are untouched.
+* If lines in the buffer have been changed but the editor exits with a nonzero exit status (e.g. `:cq!`), then you will
+  be prompted to either persist the changes or save the abandoned buffer.
+* Large match sets are intentionally capped at 1,000, which can be adjusted with `-m`. Presently, the number of matches
+  is limited to 18,278, due to 3-character alphabetic aliases.
 
 ---
 

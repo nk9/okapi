@@ -7,8 +7,8 @@ use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::Write;
-use std::process::Command;
+use std::io::{self, Write};
+use std::process::{Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn run_editor_session(
@@ -19,26 +19,71 @@ pub fn run_editor_session(
 ) -> Result<()> {
     let tmp_dir = tempdir().context("creating temporary directory")?;
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-    let tmp: Utf8PathBuf = tmp_dir
+    let tmp_path: Utf8PathBuf = tmp_dir
         .path()
         .join(format!("edit-{}.okapi.txt", ts))
         .try_into()?;
 
-    write_virtual_buffer(&tmp, label, &match_lines, &files)?;
-    let original_text = fs::read_to_string(&tmp)?;
+    write_virtual_buffer(&tmp_path, label, &match_lines, &files)?;
+    let original_text = fs::read_to_string(&tmp_path)?;
 
-    launch_editor(args, &tmp)?;
+    let status = launch_editor(args, &tmp_path)?;
 
-    let new_text = fs::read_to_string(&tmp)?;
+    let new_text = fs::read_to_string(&tmp_path)?;
     if new_text == original_text {
         println!("No changes saved. Exiting.");
         return Ok(());
     }
 
-    apply_changes(&new_text, &files)
+    // 1. Parse the changes into memory first
+    let (updates, total_lines) = parse_changes(&new_text, &files)?;
+    let change_count = updates.values().map(|m| m.len()).sum::<usize>();
+
+    if change_count == 0 {
+        println!("No functional changes detected. Exiting.");
+        return Ok(());
+    }
+
+    // 2. Determine if we should prompt the user
+    let mut should_persist = status.success();
+
+    if !status.success() {
+        println!(
+            "{} Editor did not exit cleanly, but some changes were already saved.\nIf you abort, the saved buffer will be moved to a temporary file.",
+            "WARNING:".yellow().bold()
+        );
+        should_persist = prompt_user(format!("Persist {} changes anyway?", change_count))?;
+    }
+
+    // 3. Act on decision
+    if should_persist {
+        perform_file_updates(updates, &files, total_lines)
+    } else {
+        // Move buffer file so it isn't deleted when tmp_dir drops
+        let abandoned_path = std::env::temp_dir().join(format!("okapi-abandoned-{}.txt", ts));
+        fs::copy(&tmp_path, &abandoned_path)?;
+
+        println!("\nChanges abandoned.");
+        println!(
+            "The virtual buffer was saved to: {}",
+            abandoned_path.display()
+        );
+        Ok(())
+    }
 }
 
-fn launch_editor(args: &Args, path: &Utf8Path) -> Result<()> {
+fn prompt_user(msg: String) -> Result<bool> {
+    print!("\n{} [y/N]: ", msg);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+
+    Ok(input == "y" || input == "yes")
+}
+
+fn launch_editor(args: &Args, path: &Utf8Path) -> Result<ExitStatus> {
     let editor_cmd = args
         .editor
         .clone()
@@ -49,11 +94,53 @@ fn launch_editor(args: &Args, path: &Utf8Path) -> Result<()> {
     let cmd = parts.next().context("empty editor command")?;
     let args_vec: Vec<_> = parts.chain(std::iter::once(path.as_ref())).collect();
 
-    Command::new(cmd)
+    let status = Command::new(cmd)
         .args(&args_vec)
         .status()
         .context(format!("launching editor: {}", editor_cmd))?;
-    Ok(())
+
+    Ok(status)
+}
+
+// Split the old apply_changes into two: parse and perform
+fn parse_changes(
+    new_text: &str,
+    files: &BTreeMap<FileAlias, FileInfo>,
+) -> Result<(HashMap<FileAlias, HashMap<usize, Option<String>>>, usize)> {
+    let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s?(.*)$")?;
+    let mut updates: HashMap<FileAlias, HashMap<usize, Option<String>>> = HashMap::new();
+    let mut total_lines = 0;
+
+    for line in new_text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+    {
+        if line.chars().filter(|&c| c == '▓' || c == '░').count() > 1 {
+            continue;
+        }
+
+        if let Some(cap) = line_re.captures(line) {
+            total_lines += 1;
+            let alias = FileAlias::from_str(cap.get(1).unwrap().as_str());
+            let lineno: usize = cap.get(2).unwrap().as_str().parse()?;
+            let new_content = cap.get(3).unwrap().as_str();
+
+            if let Some(file) = files.get(&alias) {
+                let orig_lines: Vec<&str> = file.original_content.lines().collect();
+                if let Some(&orig) = orig_lines.get(lineno - 1) {
+                    if new_content.trim().is_empty() {
+                        updates.entry(alias).or_default().insert(lineno, None);
+                    } else if orig != new_content {
+                        updates
+                            .entry(alias)
+                            .or_default()
+                            .insert(lineno, Some(new_content.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    Ok((updates, total_lines))
 }
 
 fn write_virtual_buffer(
@@ -105,44 +192,6 @@ fn write_virtual_buffer(
         writeln!(file, "# {:>3} = {}", f.alias, f.full_path)?;
     }
     Ok(())
-}
-
-fn apply_changes(new_text: &str, files: &BTreeMap<FileAlias, FileInfo>) -> Result<()> {
-    let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s?(.*)$")?;
-    let mut changes: HashMap<FileAlias, HashMap<usize, Option<String>>> = HashMap::new();
-    let mut total_lines = 0;
-
-    for line in new_text
-        .lines()
-        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-    {
-        if line.chars().filter(|&c| c == '▓' || c == '░').count() > 1 {
-            continue;
-        }
-
-        if let Some(cap) = line_re.captures(line) {
-            total_lines += 1;
-            let alias = FileAlias::from_str(cap.get(1).unwrap().as_str());
-            let lineno: usize = cap.get(2).unwrap().as_str().parse()?;
-            let new_content = cap.get(3).unwrap().as_str();
-
-            if let Some(file) = files.get(&alias) {
-                let orig_lines: Vec<&str> = file.original_content.lines().collect();
-                if let Some(&orig) = orig_lines.get(lineno - 1) {
-                    if new_content.trim().is_empty() {
-                        changes.entry(alias).or_default().insert(lineno, None);
-                    } else if orig != new_content {
-                        changes
-                            .entry(alias)
-                            .or_default()
-                            .insert(lineno, Some(new_content.to_string()));
-                    }
-                }
-            }
-        }
-    }
-
-    perform_file_updates(changes, files, total_lines)
 }
 
 fn perform_file_updates(
