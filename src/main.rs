@@ -48,8 +48,8 @@ pub struct Args {
     #[arg(short, long, value_name = "PATH")]
     pub working_directory: Option<Utf8PathBuf>,
 
-    /// Inclusive range of text columns which matches must START within.
-    /// Ex: 3.. (skip first 3 chars), ..5,20.. (skip chars 6-19)
+    /// 1-indexed ranges of text columns which matches must START within.
+    /// Ex: 3.. (skip first 2 chars), ..5,20.. (skip chars 6-19)
     #[arg(short, long)]
     pub columns: Option<String>,
 

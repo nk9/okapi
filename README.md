@@ -55,7 +55,7 @@ okapi "Eastern L[eavs]+\b"
 Find all lines which contain the pattern. The found pattern must start within the first 15 columns of text:
 
 ```bash
-okapi "(Suffragette ?){2}" --columns "..15"
+okapi "(Suffragette ?){2}" --columns ..15
 ```
 
 Find all lines which contain the pattern, but _exclude_ lines that match a secondary pattern:
@@ -64,11 +64,12 @@ Find all lines which contain the pattern, but _exclude_ lines that match a secon
 okapi "(Saskia)? Hamilton" --exclude "Alexander"
 ```
 
-Use a case-insensitive search to find the pattern within the range of character columns. The start index must fall
-within the column range. The `--ignore-case` flag also affects any exclude patterns:
+Use a case-insensitive search to find the pattern within the range. The first character of the
+match must fall within the column range (1-indexed and inclusive). The `--ignore-case` flag also affects any `--exclude`
+patterns:
 
 ```bash
-okapi "(tootime){3}" -c "10..35" --ignore-case
+okapi "(tootime){3}" -c 10..35 --ignore-case
 ```
 
 Any arguments that **okapi** doesn't handle are passed through to `ripgrep`. Here, the command finds matches only within
