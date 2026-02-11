@@ -4,7 +4,9 @@
 
 Sometimes you know how to identify lines which need editing, but crafting a replacement string is either hard or
 impossible. Enter **okapi**, a batch editor with a difference. Match lines from across thousands of files by regex, then
-edit them all in one temporary file with your `$EDITOR`. Then just save and close, and **okapi** does the rest.
+edit them all in one temporary file with your `$EDITOR`. Multiple cursors, rectangular selection, saved patterns—go
+nuts. You can use the full power of your editor to make changes across a whole codebase. Once you save and close,
+**okapi** writes everything back to where it came from.
 
 ---
 
@@ -12,12 +14,12 @@ edit them all in one temporary file with your `$EDITOR`. Then just save and clos
 
 1. **Okapi** runs [**ripgrep**](https://github.com/BurntSushi/ripgrep) with the provided pattern.
 2. Each matching line is collected (up to a configurable limit).
-3. All matching lines are opened together in your editor.
+3. All matching lines are cached and opened together in your editor.
 4. You edit the lines directly and save the file.
-5. When the editor closes, Okapi applies your changes back to the source files.
+5. When the editor [quits cleanly](#notes-and-safety), **okapi** applies your changes back to the source files.
 
-Don't worry: if you changed a file in the meantime, okapi will print a warning and skip those edits. Each line is
-tracked with enough metadata to ensure it is written back to the correct file and line.
+Don't worry if you changed a file after starting your edit session, **okapi** checks for conflicts before writing a line
+back. If it finds one, it will show you the conflict and skip that edit.
 
 [![asciicast](https://asciinema.org/a/Jzpw63nXDnMr0pF7.svg)](https://asciinema.org/a/Jzpw63nXDnMr0pF7)
 
@@ -104,6 +106,8 @@ Once you're done, just save and quit. The files will be modified to match the li
 * If the editor exits without saving, or if no lines were changed, then the original files are untouched.
 * If lines in the buffer have been changed but the editor exits with a nonzero exit status (e.g. `:cq!`), then you will
   be prompted to either persist the changes or save the abandoned buffer.
+* Lines which are changed in the buffer and also changed identically on disk in the meantime don't trigger a write, but
+  are counted as successful changes for the stats.
 * Large match sets are intentionally capped at 1,000, which can be adjusted with `-m`. Presently, the number of matches
   is limited to 18,278, due to 3-character alphabetic aliases.
 
