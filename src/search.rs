@@ -82,11 +82,11 @@ fn parse_column_range(col_str: &str) -> Result<Vec<usize>> {
         s.insert(0, '1');
     }
     if s.ends_with("..") {
-        s.push_str("200");
+        s.push_str("1024");
     }
 
     // range_parser returns a Vec of all numbers included in the range(s)
-    range_parser::parse_with::<usize>(&s, ";", "..").context("invalid column range")
+    range_parser::parse_with::<usize>(&s, ",", "..").context("invalid column range")
 }
 
 fn parse_rg_output(stdout: &str, args: &Args) -> Result<Vec<(Utf8PathBuf, usize, String)>> {
