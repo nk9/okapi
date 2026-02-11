@@ -7,10 +7,15 @@ use log::debug;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs;
-use std::process::Command;
+use std::process::{exit, Command};
 
-pub fn run_ripgrep_search(args: &Args) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>, String)> {
-    let pattern = args.pattern.as_ref().context("Pattern required for search")?;
+pub fn run_ripgrep_search(
+    args: &Args,
+) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>, String)> {
+    let pattern = args
+        .pattern
+        .as_ref()
+        .context("Pattern required for search")?;
     let mut cmd = Command::new("rg");
     cmd.args(["-n", "--ignore-files", "--column", "--no-heading", pattern]);
 
@@ -21,10 +26,26 @@ pub fn run_ripgrep_search(args: &Args) -> Result<(Vec<MatchLine>, BTreeMap<FileA
     };
     cmd.args(&paths);
 
-    if args.ignore_case { cmd.arg("--ignore-case"); }
-    if !args.extra_args.is_empty() { cmd.args(&args.extra_args); }
+    if args.ignore_case {
+        cmd.arg("--ignore-case");
+    }
+    if !args.extra_args.is_empty() {
+        cmd.args(&args.extra_args);
+    }
 
-    let output = cmd.output().context("failed to run ripgrep (is rg installed?)")?;
+    let output = cmd
+        .output()
+        .context("failed to run ripgrep (is rg installed?)")?;
+
+    // Check if the command failed (exit code != 0)
+    if !output.status.success() {
+        if output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("{}", stderr);
+            exit(output.status.code().unwrap_or(1));
+        }
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let matches = parse_rg_output(&stdout, args)?;
