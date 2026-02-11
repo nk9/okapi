@@ -21,31 +21,39 @@ pub struct Args {
     #[arg(required_unless_present = "file")]
     pub pattern: Option<String>,
 
-    /// Path to a file containing "path:line" entries to edit
-    #[arg(short, long, conflicts_with = "pattern", value_name = "FILE")]
+    /// Path to a file of path:line entries, one per line. Pass '-' to read from stdin
+    #[arg(short, long, conflicts_with = "pattern", value_name = "FILE_PATH")]
     pub file: Option<Utf8PathBuf>,
 
     #[arg(value_name = "PATHS", num_args = 0..)]
     pub paths: Vec<Utf8PathBuf>,
 
-    #[arg(short = 'd', long)]
+    /// Command run to edit the virtual buffer. Search order: --editor, $EDITOR, `vim`. Ex: `subl --wait`
+    #[arg(short = 'd', long, value_name = "COMMAND")]
     pub editor: Option<String>,
 
+    /// Truncate matches to prevent an overlarge virtual buffer
     #[arg(short, long, default_value = "1000")]
     pub max_count: usize,
 
-    #[arg(short, long)]
+    /// Lines matching the initial pattern are excluded if they match this one
+    #[arg(short, long, value_name = "PATTERN")]
     pub exclude: Vec<String>,
 
+    /// Run a case-insensitive search. Passed though to ripgrep. Also applies to --exclude pattern
     #[arg(short, long)]
     pub ignore_case: bool,
 
-    #[arg(short, long)]
+    /// Prefixed to paths found in --file and paths provided as positional args
+    #[arg(short, long, value_name = "PATH")]
     pub working_directory: Option<Utf8PathBuf>,
 
+    /// Inclusive range of text columns which matches must start within.
+    /// Ex: ..15 (first 16 chars); 3.. (skip first 3 chars); 20..30
     #[arg(short, long)]
     pub columns: Option<String>,
 
+    // Extra args are passed to ripgrep
     #[arg(last = true)]
     pub extra_args: Vec<String>,
 }
