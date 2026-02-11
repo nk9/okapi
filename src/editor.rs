@@ -150,88 +150,29 @@ fn perform_file_updates(
     files: &BTreeMap<FileAlias, FileInfo>,
     all_lines: usize,
 ) -> Result<()> {
-    if updates.is_empty() {
-        println!("No actual changes detected.");
-        return Ok(());
-    }
+    let (mut line_count, mut file_count) = (0, 0);
 
-    let mut line_count = 0;
-    let mut file_count = 0;
+    for (alias, changes) in updates {
+        let f = files.get(&alias).context("missing file alias")?;
+        let on_disk = fs::read_to_string(&f.full_path)?;
 
-    for (alias, mut file_changes) in updates {
-        let file = files.get(&alias).context("missing file alias")?;
-        let current_mtime = fs::metadata(&file.full_path)?.modified()?;
-
-        let mut lines: Vec<String>;
-
-        if current_mtime != file.original_mtime {
-            let current_content = fs::read_to_string(&file.full_path)?;
-            let current_lines: Vec<&str> = current_content.lines().collect();
-            let original_lines: Vec<&str> = file.original_content.lines().collect();
-
-            let mut conflicts = Vec::new();
-            let mut already_applied_indices = Vec::new();
-
-            for (&idx, new_val) in &file_changes {
-                let current_on_disk = current_lines.get(idx - 1).copied().unwrap_or("");
-                let user_intended = new_val.as_deref().unwrap_or("");
-                let original_state = original_lines.get(idx - 1).copied().unwrap_or("");
-
-                if current_on_disk == user_intended {
-                    already_applied_indices.push(idx);
-                } else if current_on_disk != original_state {
-                    conflicts.push((idx, original_state, user_intended));
+        match resolve_file_changes(&on_disk, &f.original_content, &changes) {
+            Err(conflicts) => {
+                eprintln!("\nConflict in {}: modified externally", f.path);
+                for (i, o, n) in conflicts {
+                    print_diff(i, &o, &n);
                 }
             }
-
-            if !conflicts.is_empty() {
-                eprintln!("\nConflict in {}: modified externally", file.path);
-                for (idx, old, new) in conflicts {
-                    print_diff(idx, old, new);
+            Ok((new_text, affected)) => {
+                if let Some(txt) = new_text {
+                    fs::write(&f.full_path, txt)?;
+                    println!("Updated {}", f.path);
+                } else if affected > 0 {
+                    println!("Verified {} (already up to date)", f.path);
                 }
-                continue;
+                line_count += affected;
+                file_count += 1;
             }
-
-            for idx in already_applied_indices {
-                file_changes.remove(&idx);
-                line_count += 1;
-            }
-
-            lines = current_lines.into_iter().map(|s| s.to_string()).collect();
-        } else {
-            lines = file
-                .original_content
-                .lines()
-                .map(|s| s.to_string())
-                .collect();
-        }
-
-        if !file_changes.is_empty() {
-            let mut idx = 0;
-            lines.retain_mut(|line| {
-                idx += 1;
-                if let Some(change) = file_changes.remove(&idx) {
-                    line_count += 1;
-                    if let Some(new_val) = change {
-                        *line = new_val;
-                        return true;
-                    }
-                    return false;
-                }
-                true
-            });
-
-            let mut output = lines.join("\n");
-            if file.original_content.ends_with('\n') {
-                output.push('\n');
-            }
-
-            fs::write(&file.full_path, output)?;
-            file_count += 1;
-            println!("Updated {}", file.path);
-        } else if line_count > 0 {
-            file_count += 1;
-            println!("Verified {} (already up to date)", file.path);
         }
     }
 
@@ -239,7 +180,58 @@ fn perform_file_updates(
     Ok(())
 }
 
-/// Prints a two-line character-level diff for a conflict
+fn resolve_file_changes(
+    on_disk: &str,
+    original: &str,
+    changes: &HashMap<usize, Option<String>>,
+) -> Result<(Option<String>, usize), Vec<(usize, String, String)>> {
+    let mut conflicts = Vec::new();
+    let mut modified = false;
+    let disk_lines: Vec<&str> = on_disk.lines().collect();
+    let orig_lines: Vec<&str> = original.lines().collect();
+
+    for (&idx, user_val) in changes {
+        let disk = disk_lines.get(idx - 1).copied().unwrap_or("");
+        let orig = orig_lines.get(idx - 1).copied().unwrap_or("");
+        let user = user_val.as_deref().unwrap_or("");
+
+        if disk != user {
+            if disk == orig {
+                modified = true;
+            } else {
+                conflicts.push((idx, orig.to_string(), user.to_string()));
+            }
+        }
+    }
+
+    if !conflicts.is_empty() {
+        return Err(conflicts);
+    }
+    if !modified {
+        return Ok((None, changes.len()));
+    }
+
+    let mut idx = 0;
+    let mut final_lines: Vec<String> = disk_lines.iter().map(|s| s.to_string()).collect();
+    final_lines.retain_mut(|line| {
+        idx += 1;
+        match changes.get(&idx) {
+            Some(Some(new_val)) => {
+                *line = new_val.clone();
+                true
+            }
+            Some(None) => false,
+            None => true,
+        }
+    });
+
+    let mut output = final_lines.join("\n");
+    if original.ends_with('\n') {
+        output.push('\n');
+    }
+    Ok((Some(output), changes.len()))
+}
+
 fn print_diff(lineno: usize, original: &str, updated: &str) {
     let diff = TextDiff::from_chars(original, updated);
     let changes: Vec<_> = diff.iter_all_changes().collect();
