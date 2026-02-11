@@ -96,23 +96,22 @@ jobs:
       - name: Generate Formula from Template
         run: |
           # 1. Get data
-          VERSION_RAW=${GITHUB_REF_NAME}
-          VERSION=${VERSION_RAW#v}
+          VERSION=${GITHUB_REF_NAME}
           SHA_LINUX=$(sha256sum artifacts/okapi-x86_64-unknown-linux-gnu/*.tar.gz | awk '{print $1}')
           SHA_INTEL_MAC=$(sha256sum artifacts/okapi-x86_64-apple-darwin/*.tar.gz | awk '{print $1}')
           SHA_ARM_MAC=$(sha256sum artifacts/okapi-aarch64-apple-darwin/*.tar.gz | awk '{print $1}')
           
           # 2. Paths (now both are within the same checked-out repo)
-          TEMPLATE="okapi.rb.tmpl" 
+          TEMPLATE="okapi.rb.tmpl"
           DEST="Formula/okapi.rb"
           
           # 3. Replace placeholders
           # Note: we use 'sed' to create the .rb file from the .tmpl file
           sed -e "s/\[\[VERSION\]\]/$VERSION/g" \
-              -e "s/\[\[SHA_LINUX\]\]/$SHA_LINUX/g" \
-              -e "s/\[\[SHA_INTEL_MAC\]\]/$SHA_INTEL_MAC/g" \
-              -e "s/\[\[SHA_ARM_MAC\]\]/$SHA_ARM_MAC/g" \
-              $TEMPLATE > $DEST
+          -e "s/\[\[SHA_LINUX\]\]/$SHA_LINUX/g" \
+          -e "s/\[\[SHA_INTEL_MAC\]\]/$SHA_INTEL_MAC/g" \
+          -e "s/\[\[SHA_ARM_MAC\]\]/$SHA_ARM_MAC/g" \
+          $TEMPLATE > $DEST
 
       - name: Push Changes
         run: |
