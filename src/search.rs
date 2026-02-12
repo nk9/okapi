@@ -1,5 +1,3 @@
-// src/search.rs
-
 use crate::{alias_iter, Args, FileAlias, FileInfo, MatchLine};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
@@ -49,6 +47,8 @@ pub fn run_ripgrep_search(
     if !args.extra_args.is_empty() {
         cmd.args(&args.extra_args);
     }
+
+    debug!("Running `{:?}`", &cmd);
 
     // 2. Execute command
     let output = cmd
