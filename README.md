@@ -126,7 +126,3 @@ impossible that this would be the first one to want to use it. So I thought it w
 ### Does the okapi have a name?
 
 No, but please suggest one!
-
-## License
-
-See the project repository for license details.
