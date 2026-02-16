@@ -1,6 +1,6 @@
 [package]
 name = "okapi-ed"
-version = "0.3.5"
+version = "0.4.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "Find lines across files by regex and edit them all at once with your $EDITOR"
