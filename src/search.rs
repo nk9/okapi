@@ -3,7 +3,6 @@ use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use log::debug;
 use regex::Regex;
-use shellexpand;
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::{exit, Command};
