@@ -296,7 +296,7 @@ fn print_diff(lineno: usize, original: &str, updated: &str) {
     }
     println!();
 
-    // Line 2: New version with additions in blue
+    // Line 2: New version with additions in green
     print!("okapi: {:>4} ░ ", lineno);
     for change in &changes {
         match change.tag() {
