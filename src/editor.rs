@@ -207,7 +207,7 @@ fn perform_file_updates(
 
         match resolve_file_changes(&on_disk, &f.original_content, &changes) {
             Err(conflicts) => {
-                eprintln!("\nConflict in {}: modified externally", f.path);
+                eprintln!("Conflict in {}: modified externally", f.path);
                 for (i, o, n) in conflicts {
                     print_diff(i, &o, &n);
                 }
@@ -289,18 +289,18 @@ fn print_diff(lineno: usize, original: &str, updated: &str) {
     print!(" orig: {:>4} ░ ", lineno);
     for change in &changes {
         match change.tag() {
-            ChangeTag::Delete => print!("{}", change.value().red()),
+            ChangeTag::Delete => print!("{}", change.value().bold().red()),
             ChangeTag::Equal => print!("{}", change.value()),
             ChangeTag::Insert => {} // Skip additions in "old" view
         }
     }
     println!();
 
-    // Line 2: New version with additions in green
-    print!("okapi:  {:>4} > ░ ", lineno);
+    // Line 2: New version with additions in blue
+    print!("okapi: {:>4} ░ ", lineno);
     for change in &changes {
         match change.tag() {
-            ChangeTag::Insert => print!("{}", change.value().green()),
+            ChangeTag::Insert => print!("{}", change.value().bold().green()),
             ChangeTag::Equal => print!("{}", change.value()),
             ChangeTag::Delete => {} // Skip removals in "new" view
         }
