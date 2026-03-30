@@ -208,11 +208,11 @@ mod tests {
         assert_eq!(start, vec![1, 2, 3]);
 
         // Shorthand end
-        let end = parse_column_range("198..").unwrap();
-        assert_eq!(end, vec![198, 199, 200]);
+        let end = parse_column_range("1020..").unwrap();
+        assert_eq!(end, vec![1020, 1021, 1022, 1023, 1024]);
 
         // Multiple ranges
-        let multi = parse_column_range("1..2;5..6").unwrap();
+        let multi = parse_column_range("1..2,5..6").unwrap();
         assert_eq!(multi, vec![1, 2, 5, 6]);
     }
 
