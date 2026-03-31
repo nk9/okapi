@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::io::{self, Read};
-use std::{env, fs};
 
 pub fn load_from_list(
     list_path: &Utf8PathBuf,
@@ -33,7 +33,6 @@ fn parse_and_load(
     config: &Config,
 ) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>)> {
     let mut requests = Vec::new();
-    let absolute_base = get_absolute_base(config)?;
 
     for (idx, line) in content.lines().enumerate() {
         let line = line.trim();
@@ -51,7 +50,7 @@ fn parse_and_load(
         let full_path = if path.is_absolute() {
             path
         } else {
-            absolute_base.join(path)
+            config.working_directory.join(path)
         };
 
         requests.push((full_path, lineno));
@@ -69,22 +68,6 @@ fn parse_and_load(
     let match_lines = build_match_lines(requests, &files, &path_to_alias);
 
     Ok((match_lines, files))
-}
-
-/// Determines the absolute base directory.
-/// If --working-directory is provided, it's resolved against CWD. If not, CWD is used.
-fn get_absolute_base(config: &Config) -> Result<Utf8PathBuf> {
-    let cwd = Utf8PathBuf::try_from(env::current_dir()?)?;
-
-    if let Some(ref wd) = config.working_directory {
-        if wd.is_absolute() {
-            Ok(wd.clone())
-        } else {
-            Ok(cwd.join(wd))
-        }
-    } else {
-        Ok(cwd)
-    }
 }
 
 fn load_files_parallel(paths: Vec<Utf8PathBuf>) -> Result<Vec<FileInfo>> {
@@ -167,7 +150,8 @@ mod tests {
         fs::write(&list_path, "target.txt:1").unwrap();
 
         let args = Args::parse_from(&["okapi", "-w", wd.as_str(), "--file", list_path.as_str()]);
-        let (matches, files, _) = load_from_list(&list_path, &Config::from(args)).unwrap();
+        let config = Config::try_from(args).unwrap();
+        let (matches, files, _) = load_from_list(&list_path, &config).unwrap();
 
         let alias = matches[0].alias;
         let info = files.get(&alias).unwrap();

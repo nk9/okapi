@@ -85,20 +85,14 @@ fn prompt_user(msg: String) -> Result<bool> {
 }
 
 fn launch_editor(config: &Config, path: &Utf8Path) -> Result<ExitStatus> {
-    let editor_cmd = config
-        .editor
-        .clone()
-        .or_else(|| std::env::var("EDITOR").ok())
-        .unwrap_or_else(|| "vim".to_string());
-
-    let mut parts = editor_cmd.split_whitespace();
+    let mut parts = config.editor.split_whitespace();
     let cmd = parts.next().context("empty editor command")?;
     let args_vec: Vec<_> = parts.chain(std::iter::once(path.as_ref())).collect();
 
     let status = Command::new(cmd)
         .args(&args_vec)
         .status()
-        .context(format!("launching editor: {}", editor_cmd))?;
+        .context(format!("launching editor: {}", config.editor))?;
 
     Ok(status)
 }

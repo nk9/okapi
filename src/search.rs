@@ -1,8 +1,7 @@
-use crate::{alias_iter, util::parse_column_range, Config, FileAlias, FileInfo, MatchLine};
+use crate::{alias_iter, Config, FileAlias, FileInfo, MatchLine};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use log::debug;
-use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::{exit, Command};
@@ -24,14 +23,10 @@ pub fn run_ripgrep_search(
             let expanded = shellexpand::tilde(p.as_str());
             let expanded_path = Utf8PathBuf::from(expanded.into_owned());
 
-            if let Some(ref wd) = config.working_directory {
-                if expanded_path.is_absolute() {
-                    expanded_path
-                } else {
-                    wd.join(expanded_path)
-                }
-            } else {
+            if expanded_path.is_absolute() {
                 expanded_path
+            } else {
+                config.working_directory.join(expanded_path)
             }
         })
         .collect();
@@ -74,21 +69,6 @@ pub fn run_ripgrep_search(
 
 fn parse_rg_output(stdout: &str, config: &Config) -> Result<Vec<(Utf8PathBuf, usize, String)>> {
     let mut results = Vec::new();
-    let valid_columns = config
-        .columns
-        .as_ref()
-        .map(|s| parse_column_range(s))
-        .transpose()?;
-    let exclude_res: Vec<Regex> = config
-        .exclude
-        .iter()
-        .map(|p| {
-            regex::RegexBuilder::new(p)
-                .case_insensitive(config.ignore_case)
-                .build()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
     for line in stdout.lines() {
         let parts: Vec<&str> = line.splitn(4, ':').collect();
         if parts.len() < 4 {
@@ -99,7 +79,7 @@ fn parse_rg_output(stdout: &str, config: &Config) -> Result<Vec<(Utf8PathBuf, us
         let col_no = col_str.parse::<usize>()?;
 
         // Check if the current column is in the allowed set
-        if let Some(ref allowed) = valid_columns {
+        if let Some(ref allowed) = config.columns {
             if !allowed.contains(&col_no) {
                 debug!(
                     "Excluding {}:{} (col {}) - outside range",
@@ -109,7 +89,7 @@ fn parse_rg_output(stdout: &str, config: &Config) -> Result<Vec<(Utf8PathBuf, us
             }
         }
 
-        if exclude_res.iter().any(|re| re.is_match(content)) {
+        if config.exclude.iter().any(|re| re.is_match(content)) {
             continue;
         }
         results.push((
@@ -140,11 +120,7 @@ fn finalize_search_data(
         }
         let alias = aliases.next().context("exhausted 3-letter aliases")?;
 
-        let full_path = config
-            .working_directory
-            .as_ref()
-            .map(|wd| wd.join(path))
-            .unwrap_or_else(|| path.clone());
+        let full_path = config.working_directory.join(path);
 
         let content =
             fs::read_to_string(&full_path).with_context(|| format!("reading {}", full_path))?;

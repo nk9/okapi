@@ -79,8 +79,7 @@ pub struct MatchLine {
 
 fn main() -> Result<()> {
     env_logger::init();
-    let args = Args::parse();
-    let config = Config::from(args);
+    let config = Config::try_from(Args::parse())?;
 
     let (match_lines, files, label) = if let Some(ref list_path) = config.file {
         if list_path == "-" {
