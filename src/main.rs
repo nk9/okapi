@@ -1,3 +1,4 @@
+mod config;
 mod editor;
 mod file_alias;
 mod file_loader;
@@ -7,6 +8,7 @@ mod util;
 use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{ArgGroup, Parser};
+use config::Config;
 use file_alias::FileAlias;
 
 #[derive(Parser, Debug)]
@@ -78,15 +80,16 @@ pub struct MatchLine {
 fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
+    let config = Config::from(args);
 
-    let (match_lines, files, label) = if let Some(ref list_path) = args.file {
+    let (match_lines, files, label) = if let Some(ref list_path) = config.file {
         if list_path == "-" {
-            file_loader::load_from_stdin(&args)?
+            file_loader::load_from_stdin(&config)?
         } else {
-            file_loader::load_from_list(list_path, &args)?
+            file_loader::load_from_list(list_path, &config)?
         }
     } else {
-        search::run_ripgrep_search(&args)?
+        search::run_ripgrep_search(&config)?
     };
 
     if match_lines.is_empty() {
@@ -94,7 +97,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    editor::run_editor_session(&args, &label, match_lines, files)?;
+    editor::run_editor_session(&config, &label, match_lines, files)?;
 
     Ok(())
 }
@@ -119,7 +122,6 @@ mod tests {
         let mut it = alias_iter();
         assert_eq!(it.next().unwrap().to_string(), "A");
 
-        // Skip remaining 25 single letters
         for _ in 0..25 {
             it.next();
         }

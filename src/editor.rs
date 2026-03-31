@@ -1,4 +1,5 @@
-use crate::{Args, FileAlias, FileInfo, MatchLine};
+use crate::config::Config;
+use crate::{FileAlias, FileInfo, MatchLine};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use camino_tempfile::tempdir;
@@ -12,7 +13,7 @@ use std::process::{Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn run_editor_session(
-    args: &Args,
+    config: &Config,
     label: &str,
     match_lines: Vec<MatchLine>,
     files: BTreeMap<FileAlias, FileInfo>,
@@ -27,7 +28,7 @@ pub fn run_editor_session(
     write_virtual_buffer(&tmp_path, label, &match_lines, &files)?;
     let original_text = fs::read_to_string(&tmp_path)?;
 
-    let status = launch_editor(args, &tmp_path)?;
+    let status = launch_editor(config, &tmp_path)?;
 
     let new_text = fs::read_to_string(&tmp_path)?;
     if new_text == original_text {
@@ -83,8 +84,8 @@ fn prompt_user(msg: String) -> Result<bool> {
     Ok(input == "y" || input == "yes")
 }
 
-fn launch_editor(args: &Args, path: &Utf8Path) -> Result<ExitStatus> {
-    let editor_cmd = args
+fn launch_editor(config: &Config, path: &Utf8Path) -> Result<ExitStatus> {
+    let editor_cmd = config
         .editor
         .clone()
         .or_else(|| std::env::var("EDITOR").ok())

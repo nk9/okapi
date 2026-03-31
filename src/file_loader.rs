@@ -1,4 +1,5 @@
-use crate::{alias_iter, Args, FileAlias, FileInfo, MatchLine};
+use crate::config::Config;
+use crate::{alias_iter, FileAlias, FileInfo, MatchLine};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use rayon::prelude::*;
@@ -8,31 +9,31 @@ use std::{env, fs};
 
 pub fn load_from_list(
     list_path: &Utf8PathBuf,
-    args: &Args,
+    config: &Config,
 ) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>, String)> {
     let content = fs::read_to_string(list_path).context("reading list file")?;
     let label = format!("File: {}", list_path);
-    let (matches, files) = parse_and_load(&content, args)?;
+    let (matches, files) = parse_and_load(&content, config)?;
     Ok((matches, files, label))
 }
 
 pub fn load_from_stdin(
-    args: &Args,
+    config: &Config,
 ) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>, String)> {
     let mut buffer = String::new();
     io::stdin()
         .read_to_string(&mut buffer)
         .context("reading from stdin")?;
-    let (matches, files) = parse_and_load(&buffer, args)?;
+    let (matches, files) = parse_and_load(&buffer, config)?;
     Ok((matches, files, "STDIN".to_string()))
 }
 
 fn parse_and_load(
     content: &str,
-    args: &Args,
+    config: &Config,
 ) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>)> {
     let mut requests = Vec::new();
-    let absolute_base = get_absolute_base(args)?;
+    let absolute_base = get_absolute_base(config)?;
 
     for (idx, line) in content.lines().enumerate() {
         let line = line.trim();
@@ -72,10 +73,10 @@ fn parse_and_load(
 
 /// Determines the absolute base directory.
 /// If --working-directory is provided, it's resolved against CWD. If not, CWD is used.
-fn get_absolute_base(args: &Args) -> Result<Utf8PathBuf> {
+fn get_absolute_base(config: &Config) -> Result<Utf8PathBuf> {
     let cwd = Utf8PathBuf::try_from(env::current_dir()?)?;
 
-    if let Some(ref wd) = args.working_directory {
+    if let Some(ref wd) = config.working_directory {
         if wd.is_absolute() {
             Ok(wd.clone())
         } else {
@@ -150,6 +151,7 @@ fn build_match_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Args;
     use camino_tempfile::tempdir;
     use clap::Parser;
 
@@ -165,7 +167,7 @@ mod tests {
         fs::write(&list_path, "target.txt:1").unwrap();
 
         let args = Args::parse_from(&["okapi", "-w", wd.as_str(), "--file", list_path.as_str()]);
-        let (matches, files, _) = load_from_list(&list_path, &args).unwrap();
+        let (matches, files, _) = load_from_list(&list_path, &Config::from(args)).unwrap();
 
         let alias = matches[0].alias;
         let info = files.get(&alias).unwrap();

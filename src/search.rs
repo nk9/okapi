@@ -1,5 +1,4 @@
-use crate::util::parse_column_range;
-use crate::{alias_iter, Args, FileAlias, FileInfo, MatchLine};
+use crate::{alias_iter, util::parse_column_range, Config, FileAlias, FileInfo, MatchLine};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use log::debug;
@@ -9,25 +8,23 @@ use std::fs;
 use std::process::{exit, Command};
 
 pub fn run_ripgrep_search(
-    args: &Args,
+    config: &Config,
 ) -> Result<(Vec<MatchLine>, BTreeMap<FileAlias, FileInfo>, String)> {
-    let pattern = args
+    let pattern = config
         .pattern
         .as_ref()
         .context("Pattern required for search")?;
     let mut cmd = Command::new("rg");
     cmd.args(["-n", "--ignore-files", "--column", "--no-heading", pattern]);
 
-    // 1. Process paths using camino and shellexpand
-    let paths: Vec<Utf8PathBuf> = args
+    let paths: Vec<Utf8PathBuf> = config
         .paths
         .iter()
         .map(|p| {
             let expanded = shellexpand::tilde(p.as_str());
             let expanded_path = Utf8PathBuf::from(expanded.into_owned());
 
-            if let Some(ref wd) = args.working_directory {
-                // wd should also be a Utf8PathBuf
+            if let Some(ref wd) = config.working_directory {
                 if expanded_path.is_absolute() {
                     expanded_path
                 } else {
@@ -41,11 +38,11 @@ pub fn run_ripgrep_search(
 
     cmd.args(&paths);
 
-    if args.ignore_case {
+    if config.ignore_case {
         cmd.arg("--ignore-case");
     }
-    if !args.extra_args.is_empty() {
-        cmd.args(&args.extra_args);
+    if !config.extra_args.is_empty() {
+        cmd.args(&config.extra_args);
     }
 
     debug!("Running `{:?}`", &cmd);
@@ -69,25 +66,25 @@ pub fn run_ripgrep_search(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let matches = parse_rg_output(&stdout, args)?;
-    let (files, match_lines) = finalize_search_data(matches, args)?;
+    let matches = parse_rg_output(&stdout, config)?;
+    let (files, match_lines) = finalize_search_data(matches, config)?;
 
     Ok((match_lines, files, format!("Regex: {}", pattern)))
 }
 
-fn parse_rg_output(stdout: &str, args: &Args) -> Result<Vec<(Utf8PathBuf, usize, String)>> {
+fn parse_rg_output(stdout: &str, config: &Config) -> Result<Vec<(Utf8PathBuf, usize, String)>> {
     let mut results = Vec::new();
-    let valid_columns = args
+    let valid_columns = config
         .columns
         .as_ref()
         .map(|s| parse_column_range(s))
         .transpose()?;
-    let exclude_res: Vec<Regex> = args
+    let exclude_res: Vec<Regex> = config
         .exclude
         .iter()
         .map(|p| {
             regex::RegexBuilder::new(p)
-                .case_insensitive(args.ignore_case)
+                .case_insensitive(config.ignore_case)
                 .build()
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -123,15 +120,15 @@ fn parse_rg_output(stdout: &str, args: &Args) -> Result<Vec<(Utf8PathBuf, usize,
     }
 
     results.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    if results.len() > args.max_count {
-        results.truncate(args.max_count);
+    if results.len() > config.max_count {
+        results.truncate(config.max_count);
     }
     Ok(results)
 }
 
 fn finalize_search_data(
     matches: Vec<(Utf8PathBuf, usize, String)>,
-    args: &Args,
+    config: &Config,
 ) -> Result<(BTreeMap<FileAlias, FileInfo>, Vec<MatchLine>)> {
     let mut files = BTreeMap::new();
     let mut path_to_alias = BTreeMap::new();
@@ -143,7 +140,7 @@ fn finalize_search_data(
         }
         let alias = aliases.next().context("exhausted 3-letter aliases")?;
 
-        let full_path = args
+        let full_path = config
             .working_directory
             .as_ref()
             .map(|wd| wd.join(path))
