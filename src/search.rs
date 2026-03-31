@@ -1,3 +1,4 @@
+use crate::util::parse_column_range;
 use crate::{alias_iter, Args, FileAlias, FileInfo, MatchLine};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
@@ -72,20 +73,6 @@ pub fn run_ripgrep_search(
     let (files, match_lines) = finalize_search_data(matches, args)?;
 
     Ok((match_lines, files, format!("Regex: {}", pattern)))
-}
-
-fn parse_column_range(col_str: &str) -> Result<Vec<usize>> {
-    let mut s = col_str.to_string();
-    // Handle the shorthand ".." by providing boundaries
-    if s.starts_with("..") {
-        s.insert(0, '1');
-    }
-    if s.ends_with("..") {
-        s.push_str("1024");
-    }
-
-    // range_parser returns a Vec of all numbers included in the range(s)
-    range_parser::parse_with::<usize>(&s, ",", "..").context("invalid column range")
 }
 
 fn parse_rg_output(stdout: &str, args: &Args) -> Result<Vec<(Utf8PathBuf, usize, String)>> {
@@ -192,32 +179,4 @@ fn finalize_search_data(
         .collect();
 
     Ok((files, match_lines))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_column_range_expansion() {
-        // Standard range
-        assert_eq!(parse_column_range("1..3").unwrap(), vec![1, 2, 3]);
-
-        // Shorthand start
-        let start = parse_column_range("..3").unwrap();
-        assert_eq!(start, vec![1, 2, 3]);
-
-        // Shorthand end
-        let end = parse_column_range("1020..").unwrap();
-        assert_eq!(end, vec![1020, 1021, 1022, 1023, 1024]);
-
-        // Multiple ranges
-        let multi = parse_column_range("1..2,5..6").unwrap();
-        assert_eq!(multi, vec![1, 2, 5, 6]);
-    }
-
-    #[test]
-    fn test_invalid_range() {
-        assert!(parse_column_range("abc").is_err());
-    }
 }

@@ -2,6 +2,7 @@ mod editor;
 mod file_alias;
 mod file_loader;
 mod search;
+mod util;
 
 use anyhow::Result;
 use camino::Utf8PathBuf;
