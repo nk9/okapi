@@ -93,6 +93,15 @@ Edit the text just as you would any other text file. However, Okapi is line-base
 
 Once you're done, just save and quit. The files will be modified to match the lines in the temporary buffer.
 
+### $EDITOR command strings
+
+| Editor  | Docs                                                              | Command                    | Notes                                                                                                    |
+|---------|-------------------------------------------------------------------|----------------------------|----------------------------------------------------------------------------------------------------------|
+| Vim     |                                                                   | None (default)             |                                                                                                          |
+| Emacs   |                                                                   | `emacsclient --tty`        | Requires a running [daemon](https://www.gnu.org/software/emacs/manual/html_node/emacs/Emacs-Server.html) |
+| Sublime | [docs](https://www.sublimetext.com/docs/command_line.html)        | `subl --wait --new-window` |                                                                                                          |
+| VS Code | [docs](https://code.visualstudio.com/docs/configure/command-line) | `code --wait`              |                                                                                                          |
+
 ## Requirements
 
 * **ripgrep** (`rg`) must be installed and available in `PATH`
