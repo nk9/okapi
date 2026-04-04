@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use camino_tempfile::tempdir;
 use crossterm::style::Stylize;
+use log::info;
 use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 use std::collections::{BTreeMap, HashMap};
@@ -88,6 +89,7 @@ fn launch_editor(config: &Config, path: &Utf8Path) -> Result<ExitStatus> {
     let mut parts = config.editor.split_whitespace();
     let cmd = parts.next().context("empty editor command")?;
     let args_vec: Vec<_> = parts.chain(std::iter::once(path.as_ref())).collect();
+    info!("Launching {} {}", cmd, args_vec.join(" "));
 
     let status = Command::new(cmd)
         .args(&args_vec)
