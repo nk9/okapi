@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -83,7 +83,7 @@ jobs:
     needs: release
     steps:
       - name: Checkout Tap Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: nk9/homebrew-okapi
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
