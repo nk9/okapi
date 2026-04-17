@@ -134,4 +134,4 @@ impossible that this would be the first one to want to use it. So I thought it w
 
 ### Does the okapi have a name?
 
-No, but please suggest one!
+No, but [please suggest one](https://github.com/nk9/okapi/discussions/6)!
