@@ -205,8 +205,8 @@ fn perform_file_updates(
         match resolve_file_changes(&on_disk, &f.original_content, &changes) {
             Err(conflicts) => {
                 eprintln!("Conflict in {}: modified externally", f.path);
-                for (i, o, n) in conflicts {
-                    print_diff(i, &o, &n);
+                for (i, d, o, n) in conflicts {
+                    print_diff(i, &d, &o, &n);
                 }
             }
             Ok((new_text, affected)) => {
@@ -230,7 +230,7 @@ fn resolve_file_changes(
     on_disk: &str,
     original: &str,
     changes: &HashMap<usize, Option<String>>,
-) -> Result<(Option<String>, usize), Vec<(usize, String, String)>> {
+) -> Result<(Option<String>, usize), Vec<(usize, String, String, String)>> {
     let mut conflicts = Vec::new();
     let mut modified = false;
     let disk_lines: Vec<&str> = on_disk.lines().collect();
@@ -245,7 +245,7 @@ fn resolve_file_changes(
             if disk == orig {
                 modified = true;
             } else {
-                conflicts.push((idx, orig.to_string(), user.to_string()));
+                conflicts.push((idx, disk.to_string(), orig.to_string(), user.to_string()));
             }
         }
     }
@@ -278,7 +278,21 @@ fn resolve_file_changes(
     Ok((Some(output), changes.len()))
 }
 
-fn print_diff(lineno: usize, original: &str, updated: &str) {
+fn print_diff(lineno: usize, disk: &str, original: &str, updated: &str) {
+    let diff = TextDiff::from_chars(original, disk);
+    let changes: Vec<_> = diff.iter_all_changes().collect();
+
+    // Line 1: On-disk version with external modifications in yellow
+    print!(" disk: {:>4} ░ ", lineno);
+    for change in &changes {
+        match change.tag() {
+            ChangeTag::Insert => print!("{}", change.value().bold().yellow()),
+            ChangeTag::Equal => print!("{}", change.value()),
+            ChangeTag::Delete => {}
+        }
+    }
+    println!();
+
     let diff = TextDiff::from_chars(original, updated);
     let changes: Vec<_> = diff.iter_all_changes().collect();
 
