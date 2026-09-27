@@ -7,7 +7,7 @@ use crossterm::style::Stylize;
 use log::info;
 use regex::Regex;
 use similar::{ChangeTag, TextDiff};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::process::{Command, ExitStatus};
@@ -105,7 +105,7 @@ fn parse_changes(
     files: &BTreeMap<FileAlias, FileInfo>,
 ) -> Result<(HashMap<FileAlias, HashMap<usize, Option<String>>>, usize)> {
     let line_re = Regex::new(r"^\s*([A-Z]+)\s+(\d+)\s+[▓░]\s?(.*)$")?;
-    let mut updates: HashMap<FileAlias, HashMap<usize, Option<String>>> = HashMap::new();
+    let mut raw: HashMap<FileAlias, HashMap<usize, Vec<Option<String>>>> = HashMap::new();
     let mut total_lines = 0;
 
     for line in new_text
@@ -125,19 +125,88 @@ fn parse_changes(
             if let Some(file) = files.get(&alias) {
                 let orig_lines: Vec<&str> = file.original_content.lines().collect();
                 if let Some(&orig) = orig_lines.get(lineno - 1) {
-                    if new_content.trim().is_empty() {
-                        updates.entry(alias).or_default().insert(lineno, None);
+                    let new_val = if new_content.trim().is_empty() {
+                        None
                     } else if orig != new_content {
-                        updates
-                            .entry(alias)
-                            .or_default()
-                            .insert(lineno, Some(new_content.to_string()));
-                    }
+                        Some(new_content.to_string())
+                    } else {
+                        continue;
+                    };
+                    raw.entry(alias)
+                        .or_default()
+                        .entry(lineno)
+                        .or_default()
+                        .push(new_val);
                 }
             }
         }
     }
+
+    let updates = resolve_duplicates(raw, files)?;
     Ok((updates, total_lines))
+}
+
+fn resolve_duplicates(
+    raw: HashMap<FileAlias, HashMap<usize, Vec<Option<String>>>>,
+    files: &BTreeMap<FileAlias, FileInfo>,
+) -> Result<HashMap<FileAlias, HashMap<usize, Option<String>>>> {
+    let mut updates: HashMap<FileAlias, HashMap<usize, Option<String>>> = HashMap::new();
+    let mut had_conflict = false;
+
+    for (alias, lines) in raw {
+        let mut resolved = HashMap::new();
+        for (lineno, versions) in lines {
+            let distinct: HashSet<&Option<String>> = versions.iter().collect();
+            if distinct.len() > 1 {
+                had_conflict = true;
+                let orig = files
+                    .get(&alias)
+                    .and_then(|f| f.original_content.lines().nth(lineno - 1))
+                    .unwrap_or("");
+                print_duplicate_conflict(alias, lineno, orig, &versions);
+            } else {
+                resolved.insert(lineno, versions.into_iter().next().unwrap());
+            }
+        }
+        updates.insert(alias, resolved);
+    }
+
+    if had_conflict {
+        anyhow::bail!("duplicate edits with conflicting content; see listing above");
+    }
+    Ok(updates)
+}
+
+fn print_duplicate_conflict(
+    alias: FileAlias,
+    lineno: usize,
+    orig: &str,
+    versions: &[Option<String>],
+) {
+    eprintln!(
+        "{} {} line {} edited multiple times with different content:",
+        "CONFLICT:".red().bold(),
+        alias,
+        lineno
+    );
+    eprintln!("  orig: {}", orig);
+    for (i, v) in versions.iter().enumerate() {
+        let text = v.as_deref().unwrap_or("<deleted>");
+        eprint!("    #{}: ", i + 1);
+        print_char_diff(orig, text);
+    }
+}
+
+fn print_char_diff(orig: &str, updated: &str) {
+    let diff = TextDiff::from_chars(orig, updated);
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Insert => print!("{}", change.value().green()),
+            ChangeTag::Delete => print!("{}", change.value().red().crossed_out()),
+            ChangeTag::Equal => print!("{}", change.value()),
+        }
+    }
+    println!();
 }
 
 fn write_virtual_buffer(
@@ -330,4 +399,61 @@ fn print_summary(lines_chg: usize, files_chg: usize, lines_total: usize, files_t
         lines_total - lines_chg,
         files_total - files_chg
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_file(alias: FileAlias, content: &str) -> FileInfo {
+        FileInfo {
+            path: Utf8PathBuf::from("test.txt"),
+            full_path: Utf8PathBuf::from("test.txt"),
+            alias,
+            original_content: content.to_string(),
+            original_mtime: SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn duplicate_edit_with_conflicting_content_is_rejected() {
+        let alias = FileAlias::from_str("A");
+        let mut files = BTreeMap::new();
+        files.insert(alias, make_file(alias, "line one\n"));
+
+        // Same alias+lineno appears twice in the buffer with different
+        // replacement text — e.g. from a copy-paste in the editor.
+        let buffer = "A   1 ▓ first version\nA   1 ░ second version\n";
+
+        let result = parse_changes(buffer, &files);
+
+        assert!(
+            result.is_err(),
+            "expected conflicting duplicate edits to be rejected, \
+             but they were silently merged (second write wins)"
+        );
+    }
+
+    #[test]
+    fn identical_duplicate_edits_to_same_alias_succeed() {
+        let alias = FileAlias::from_str("A");
+        let mut files = BTreeMap::new();
+        files.insert(alias, make_file(alias, "line one\n"));
+
+        // Same alias+lineno appears three times with identical content —
+        // e.g. the user selected and re-saved the same block twice.
+        let buffer = "A   1 ▓ same version\nA   1 ░ same version\nA   1 ▓ same version\n";
+
+        let result = parse_changes(buffer, &files);
+
+        assert!(
+            result.is_ok(),
+            "identical duplicates should not be treated as conflicts"
+        );
+        let (updates, _) = result.unwrap();
+        assert_eq!(
+            updates.get(&alias).and_then(|m| m.get(&1)),
+            Some(&Some("same version".to_string()))
+        );
+    }
 }
